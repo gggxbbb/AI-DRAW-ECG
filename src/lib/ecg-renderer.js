@@ -91,15 +91,19 @@ export class ECGRenderer {
         if (!this.showLabels) return;
         const ctx = this.ctx;
         ctx.save();
-        ctx.fillStyle = this.colors.label;
-        ctx.font = `${9 * this.zoomLevel}px "Segoe UI", sans-serif`;
-        ctx.textBaseline = 'top';
-        ctx.fillText(name, x + 2, y + (2 * this.zoomLevel));
+        this.applyLeadLabelTextStyle(ctx);
+        ctx.fillText(name, x + 2, this.getLabelTopY(y));
         ctx.restore();
     }
 
     getLabelTopY(y) {
         return y + (2 * this.zoomLevel);
+    }
+
+    applyLeadLabelTextStyle(ctx) {
+        ctx.fillStyle = this.colors.label;
+        ctx.font = `${9 * this.zoomLevel}px "Segoe UI", sans-serif`;
+        ctx.textBaseline = 'top';
     }
 
     drawInfoLabel(x, y, w) {
@@ -147,9 +151,7 @@ export class ECGRenderer {
         if (fp) this.drawInfoLabel(fp.x, fp.y, fp.w);
         if (this.showLabels) {
             ctx.save();
-            ctx.fillStyle = '#aaa';
-            ctx.font = `${9 * this.zoomLevel}px "Segoe UI", sans-serif`;
-            ctx.textBaseline = 'top';
+            this.applyLeadLabelTextStyle(ctx);
             ctx.textAlign = 'left';
             ctx.fillText('II', this._rhythmPanel.x + 2, this.getLabelTopY(this._rhythmPanel.y) - (1 * this.zoomLevel));
             ctx.textAlign = 'right';
