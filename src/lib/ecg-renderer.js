@@ -190,8 +190,9 @@ export class ECGRenderer {
             const allPts = [];
             for (const beat of toolCall.beats) {
                 const smoothed = catmullRomSmooth(beat.points, 0.002);
+                const beatStart = smoothed[0]?.[0] || 0;
                 for (const [t, mv] of smoothed) {
-                    allPts.push({ time: beat.onset + t, mv });
+                    allPts.push({ time: beat.onset + (t - beatStart), mv });
                 }
             }
             allPts.sort((a, b) => a.time - b.time);
@@ -234,14 +235,16 @@ export class ECGRenderer {
     drawPointCurveInRect(rx, ry, rw, rh, curvePoints, params, duration) {
         const ctx = this.ctx;
         const bl = ry + rh * 0.5;
-        const cycleLen = curvePoints[curvePoints.length - 1][0];
+        const time0 = curvePoints[0][0];
+        const cycleLen = curvePoints[curvePoints.length - 1][0] - time0;
+        if (cycleLen <= 0) return;
         const reps = Math.ceil(duration / cycleLen) + 1;
 
         const pts = [];
         for (let r = 0; r < reps; r++) {
             const off = r * cycleLen;
             for (const [t, mv] of curvePoints) {
-                const at = off + t;
+                const at = off + (t - time0);
                 if (at < duration) pts.push({ time: at, mv });
             }
         }
