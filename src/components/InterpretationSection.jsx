@@ -26,7 +26,7 @@ export default function InterpretationSection() {
                             {prog.conclusion}
                         </div>
                         <div style={{display: 'flex', flexWrap: 'wrap', gap: '2px 10px', marginBottom: 4}}>
-                            {prog.measurements.map((m, i) => (
+                            {prog.measurements.filter(m => m && m.label).map((m, i) => (
                                 <span key={i} style={{fontSize: '0.72rem', color: '#5a6c7a'}}>
                                     {m.label}: <strong>{m.value}</strong>
                                     {m.flag ? <span style={{color: '#e74c3c', fontSize: '0.68rem'}}> {m.flag}</span> : null}
@@ -35,10 +35,10 @@ export default function InterpretationSection() {
                         </div>
                         {prog.findings.length > 0 && (
                             <div>
-                                {prog.findings.map((f, i) => (
-                                    <span key={i} className={`int-item ${f.severity}`}
-                                        style={{fontSize: '0.73rem'}}>{f.text}</span>
-                                )).reduce((prev, curr, i) => i === 0 ? [curr] : [...prev, <br key={`br-${i}`}/>, curr], [])}
+                                {prog.findings.filter(f => f && f.text).map((f, i) => (
+                                    <div key={i} className={`int-item ${f.severity}`}
+                                        style={{fontSize: '0.73rem'}}>{f.text}</div>
+                                ))}
                             </div>
                         )}
                     </div>

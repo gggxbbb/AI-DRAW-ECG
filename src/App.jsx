@@ -4,6 +4,7 @@ import AIConfigSection from './components/AIConfigSection';
 import ConditionInput from './components/ConditionInput';
 import DisplayOptionsSection from './components/DisplayOptionsSection';
 import InterpretationSection from './components/InterpretationSection';
+import RawOutput from './components/RawOutput';
 import ECGDisplay from './components/ECGDisplay';
 import Toast from './components/Toast';
 import './index.css';
@@ -36,7 +37,7 @@ export default function App() {
                     <h1>AI ECG Generator</h1>
                 </div>
                 <span className="separator-dot"></span>
-                <p className="subtitle">12导联智能心电图生成系统</p>
+                <p className="subtitle">AI 驱动的 12 导联心电图生成工具</p>
             </header>
 
             <main className="main-content">
@@ -45,6 +46,7 @@ export default function App() {
                     <ConditionInput />
                     <DisplayOptionsSection />
                     <InterpretationSection />
+                    <RawOutput />
                 </aside>
 
                 <ECGDisplay />

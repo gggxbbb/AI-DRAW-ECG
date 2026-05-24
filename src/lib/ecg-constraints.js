@@ -71,43 +71,34 @@ export function validateToolCall(call) {
 }
 
 export function buildToolSchemaDescription() {
-    return `你是一位资深心电生理学专家。你的任务是根据用户描述的生理病理状态，生成心电图绘制工具调用数组。
+    return `你是一位资深心电生理学专家。根据用户描述的生理病理状态，生成心电图绘制工具调用数组（JSON数组格式）。
 
 请严格只输出 JSON 数组，不要包含任何其他文本或 markdown 标记。
 
----
-可用工具:
+工具调用顺序自由，但请完成以下所有任务后将 complete 设为 true：
 
-1. initRender（必须先调用）
-{
-  "tool": "initRender",
-  "paperSpeed": 25,
-  "gain": 10,
-  "rhythmType": "sinus",
-  "params": { "heartRate": 72, "qrsDuration": 90, "qtInterval": 390, "qrsAxis": 30 }
-}
+□ 1. initRender - 初始化画布、设置心率和节律类型
+□ 2. drawLeadCurve ×12 - 为12导联各绘制波形（I,II,III,aVR,aVL,aVF,V1-V6）
+□ 3. drawRhythmStrip - 绘制底部节律条
+□ 4. writeInterpretation - 书写AI临床解读
+□ 5. writeLeadDescriptions - 为每个导联书写描述
+
+---
+initRender:
+{ "tool": "initRender", "paperSpeed": 25, "gain": 10, "rhythmType": "sinus", "params": { "heartRate": 72, "qrsDuration": 90, "qtInterval": 390, "qrsAxis": 30 } }
 paperSpeed: 12.5|25|50, gain: 5|10|20
 rhythmType: "sinus"|"atrial_fibrillation"|"atrial_flutter"|"ventricular"|"paced"|"complete_heart_block"|"ventricular_fibrillation"|"torsades"|"sinus_with_pvc"|"sinus_arrhythmia"|"sinus_with_wenckebach"|"sinus_with_mobitz2"
 
-2. drawLeadCurve - 用数据点绘制单个导联（12导联各一次，自由决定波形形状）
-{
-  "tool": "drawLeadCurve",
-  "lead": "I",
-  "points": [[0, 0], [0.03, 0.06], [0.08, -0.1], [0.12, 1.5], [0.16, -0.2], [0.22, 0.0], [0.28, 0.02], [0.34, 0.35], [0.42, 0]]
-}
-points 是 [[时间秒, 振幅mV], ...] 数组，描述一个完整心搏周期的关键拐点。
-系统用 Catmull-Rom 曲线平滑连接。至少6个点，时间跨度 >= 0.4秒。
-振幅范围: -5 ~ +5 mV。points[0][0] 必须为 0。
-肢体导联按电轴投影调整振幅，胸导联 R 波 V1→V6 递增。
+drawLeadCurve:
+{ "tool": "drawLeadCurve", "lead": "I", "points": [[0,0],[0.03,0.06],[0.08,-0.1],[0.12,1.5],[0.16,-0.2],[0.22,0.0],[0.28,0.02],[0.34,0.35],[0.42,0]] }
+points: [[t秒,mV],...] 至少6点、时间>=0.4s、振幅-5~+5mV、系统自动Catmull-Rom平滑
 
-3. drawRhythmStrip - 绘制底部节律条
+drawRhythmStrip:
 { "tool": "drawRhythmStrip", "lead": "II" }
 
-4. writeInterpretation - AI临床解读
-{ "tool": "writeInterpretation", "text": "完整临床解读" }
+writeInterpretation:
+{ "tool": "writeInterpretation", "text": "完整临床解读文本" }
 
-5. writeLeadDescriptions - 每导联一句
-{ "tool": "writeLeadDescriptions", "descriptions": {"I": "...", ...} }
-
-顺序: initRender -> drawLeadCurve(x12) -> drawRhythmStrip -> writeInterpretation -> writeLeadDescriptions`;
+writeLeadDescriptions:
+{ "tool": "writeLeadDescriptions", "descriptions": {"I":"...","II":"...",...}}`;
 }

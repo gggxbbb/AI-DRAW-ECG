@@ -5,7 +5,7 @@ export default function ConditionInput() {
     const { state, handleGenerateStream, addToast } = useECG();
     const [condition, setCondition] = useState('');
     const [additional, setAdditional] = useState('');
-    const { isGenerating, aiConfig, streamProgress } = state;
+    const { isGenerating, aiConfig, progressBar } = state;
 
     const handleGenerateClick = async () => {
         if (!condition.trim()) {
@@ -38,7 +38,7 @@ export default function ConditionInput() {
                 onClick={handleGenerateClick}
                 disabled={isGenerating}>
                 {isGenerating ? (
-                    <><span className="spinner"></span> AI生成中... {streamProgress || ''}</>
+                    <><span className="spinner"></span> AI生成中... {progressBar && <span style={{fontFamily:'monospace',fontSize:'0.7rem',marginLeft:4}}>{progressBar}</span>}</>
                 ) : (
                     <>&#9889; 生成心电图</>
                 )}

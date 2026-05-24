@@ -44,26 +44,11 @@ export default function ECGDisplay() {
                 </span>
                 <span className="toolbar-spacer" />
                 <button type="button" className="btn btn-sm" title="放大"
-                    onClick={() => {
-                        const r = getRenderer();
-                        if (!r || !currentParams) return;
-                        r.setZoom(r.zoomLevel + 0.2);
-                        r.renderInit(currentParams);
-                    }}>+</button>
+                    onClick={() => { const r = getRenderer(); if (r) r.adjustZoom(0.2); }}>+</button>
                 <button type="button" className="btn btn-sm" title="缩小"
-                    onClick={() => {
-                        const r = getRenderer();
-                        if (!r || !currentParams) return;
-                        r.setZoom(r.zoomLevel - 0.2);
-                        r.renderInit(currentParams);
-                    }}>&minus;</button>
+                    onClick={() => { const r = getRenderer(); if (r) r.adjustZoom(-0.2); }}>&minus;</button>
                 <button type="button" className="btn btn-sm" title="重置"
-                    onClick={() => {
-                        const r = getRenderer();
-                        if (!r || !currentParams) return;
-                        r.setZoom(1.0);
-                        r.renderInit(currentParams);
-                    }}>1:1</button>
+                    onClick={() => { const r = getRenderer(); if (r) r.resetZoom(); }}>1:1</button>
                 <button type="button" className="btn btn-sm" title="导出图片"
                     onClick={() => {
                         const r = getRenderer();

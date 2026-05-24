@@ -18,291 +18,137 @@ export class AIClient {
     }
 
     async testConnection() {
-        if (!this.endpoint || !this.token) {
-            throw new Error('请先配置API Endpoint和Token');
-        }
-
+        if (!this.endpoint || !this.token) throw new Error('请先配置API Endpoint和Token');
         try {
-            const response = await fetch(this.endpoint, {
+            const resp = await fetch(this.endpoint, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.token}`,
-                },
-                body: JSON.stringify({
-                    model: this.model,
-                    messages: [
-                        { role: 'user', content: 'ping' }
-                    ],
-                    max_tokens: 10,
-                    temperature: 0,
-                }),
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+                body: JSON.stringify({ model: this.model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 10, temperature: 0 }),
             });
-
-            if (!response.ok) {
-                const errData = await response.json().catch(() => ({}));
-                throw new Error(errData.error?.message || `HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            const data = await response.json();
-            return {
-                success: true,
-                model: data.model || this.model,
-            };
-        } catch (err) {
-            throw new Error(`连接失败: ${err.message}`);
-        }
+            if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error?.message || `HTTP ${resp.status}`); }
+            const d = await resp.json();
+            return { success: true, model: d.model || this.model };
+        } catch (err) { throw new Error(`连接失败: ${err.message}`); }
     }
 
-    async generateECGToolsStream(condition, additionalParams, onToolCall) {
-        if (!this.endpoint || !this.token) {
-            throw new Error('请先配置API Endpoint和Token');
+    async streamCall(messages, onReasoning, onToolCall) {
+        if (!this.endpoint || !this.token) throw new Error('请先配置API Endpoint和Token');
+
+        const resp = await fetch(this.endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+            body: JSON.stringify({ model: this.model, messages, max_tokens: this.maxTokens, temperature: this.temperature, stream: true }),
+        });
+        if (!resp.ok) {
+            const e = await resp.json().catch(() => ({}));
+            throw new Error(`API错误: ${e.error?.message || `HTTP ${resp.status}`}`);
         }
 
-        const systemPrompt = buildToolSchemaDescription();
-        const userPrompt = `请根据以下生理病理描述，生成心电图绘制工具调用数组。
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let toolIndex = 0;
 
-**患者描述**：${condition}
-${additionalParams ? `\n**补充参数**：${additionalParams}` : ''}
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
 
- 要求：
-- 必须按顺序: initRender -> drawLeadCurve(x12) -> drawRhythmStrip -> writeInterpretation -> writeLeadDescriptions
-- drawLeadCurve 为每个导联提供完整心搏周期的关键数据点，肢体导联振幅符合电轴投影，胸导联R波V1->V6递增`;
+            for (const line of chunk.split('\n')) {
+                if (!line.startsWith('data: ')) continue;
+                const data = line.slice(6);
+                if (data === '[DONE]') break;
+                try {
+                    const parsed = JSON.parse(data);
+                    const delta = parsed.choices?.[0]?.delta;
+                    if (!delta) continue;
 
-        try {
-            const response = await fetch(this.endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.token}`,
-                },
-                body: JSON.stringify({
-                    model: this.model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userPrompt },
-                    ],
-                    max_tokens: this.maxTokens,
-                    temperature: this.temperature,
-                    stream: true,
-                }),
-            });
+                    const reasoning = delta.reasoning_content;
+                    if (reasoning && onReasoning) onReasoning(reasoning, 'reasoning');
 
-            if (!response.ok) {
-                const errData = await response.json().catch(() => ({}));
-                const errMsg = errData.error?.message || `HTTP ${response.status}`;
-                throw new Error(`API错误: ${errMsg}`);
-            }
+                    const content = delta.content;
+                    if (!content) continue;
+                    if (onReasoning) onReasoning(content, 'content');
+                    buffer += content;
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            let toolCallIndex = 0;
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n');
-
-                for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue;
-                    const data = line.slice(6);
-                    if (data === '[DONE]') break;
-
-                    try {
-                        const parsed = JSON.parse(data);
-                        const content = parsed.choices?.[0]?.delta?.content || '';
-                        if (!content) continue;
-
-                        buffer += content;
-
-                        let braceDepth = 0;
-                        let inString = false;
-                        let escapeNext = false;
-                        let objectStart = -1;
-                        let foundCount = 0;
-
-                        for (let i = 0; i < buffer.length; i++) {
-                            const ch = buffer[i];
-                            if (escapeNext) { escapeNext = false; continue; }
-                            if (ch === '\\') { escapeNext = true; continue; }
-                            if (ch === '"') { inString = !inString; continue; }
-                            if (inString) continue;
-
-                            if (ch === '[' || ch === ']' || ch === ',' || ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t') continue;
-
-                            if (ch === '{') {
-                                if (braceDepth === 0) objectStart = i;
-                                braceDepth++;
-                            } else if (ch === '}') {
-                                braceDepth--;
-                                if (braceDepth === 0 && objectStart >= 0) {
-                                    const objStr = buffer.slice(objectStart, i + 1);
-                                    try {
-                                        const toolCall = JSON.parse(objStr);
-                                        foundCount++;
-                                        onToolCall(toolCall, toolCallIndex++);
-                                    } catch (e) {
-                                        // incomplete JSON, keep buffering
-                                    }
-                                }
+                    let braceDepth = 0, inString = false, esc = false, objStart = -1, found = 0;
+                    for (let i = 0; i < buffer.length; i++) {
+                        const ch = buffer[i];
+                        if (esc) { esc = false; continue; }
+                        if (ch === '\\') { esc = true; continue; }
+                        if (ch === '"') { inString = !inString; continue; }
+                        if (inString) continue;
+                        if ('[ ],\n\r\t'.includes(ch)) continue;
+                        if (ch === '{') { if (braceDepth === 0) objStart = i; braceDepth++; }
+                        else if (ch === '}') {
+                            braceDepth--;
+                            if (braceDepth === 0 && objStart >= 0) {
+                                try {
+                                    const obj = JSON.parse(buffer.slice(objStart, i + 1));
+                                    found++;
+                                    onToolCall(obj, toolIndex++);
+                                } catch (e) {}
                             }
                         }
-
-                        if (foundCount > 0) {
-                            const lastBrace = buffer.lastIndexOf('}');
-                            if (lastBrace >= 0) buffer = buffer.slice(lastBrace + 1);
-                        }
-                    } catch (e) {
-                        // skip unparseable SSE lines
                     }
-                }
+                    if (found > 0) {
+                        const lb = buffer.lastIndexOf('}');
+                        if (lb >= 0) buffer = buffer.slice(lb + 1);
+                    }
+                } catch (e) {}
             }
-        } catch (err) {
-            throw new Error(`流式传输失败: ${err.message}`);
         }
+        return toolIndex;
     }
 
-    async generateECGTools(condition, additionalParams = '') {
-        if (!this.endpoint || !this.token) {
-            throw new Error('请先配置API Endpoint和Token');
-        }
-
+    async generateMultiRound(condition, additionalParams, onReasoning, onToolCall, onProgress) {
         const systemPrompt = buildToolSchemaDescription();
+        const messages = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `请根据以下生理病理描述生成心电图。\n\n患者描述：${condition}${additionalParams ? `\n补充参数：${additionalParams}` : ''}\n\n使用工具调用完成任务清单` },
+        ];
 
-        const userPrompt = `请根据以下生理病理描述，生成心电图绘制工具调用数组。
+        let remaining = null;
+        let errors = [];
+        let round = 0;
 
-**患者描述**：${condition}
-${additionalParams ? `\n**补充参数**：${additionalParams}` : ''}
+        while (round < 5) {
+            round++;
+            onProgress({ type: 'round', round, messages });
 
-要求：
-- 必须包含 draw12Lead 工具调用，leads 对象中包含全部12导联
-- 每个导联包含3个等间距心搏（心率为 heartRate = 60/onset间距）
-- 12个导联的 beat onset 时间必须完全一致
-- 不同导联使用不同的 qrsAmplitude、stElevation 等参数反映该疾病的导联特异性改变
-- 肢体导联的振幅参数应符合电轴投影规律
-- 胸导联的R波应从 V1 到 V6 递增`;
-
-        try {
-            const response = await fetch(this.endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.token}`,
-                },
-                body: JSON.stringify({
-                    model: this.model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userPrompt },
-                    ],
-                    max_tokens: this.maxTokens,
-                    temperature: this.temperature,
-                }),
+            let totalTools = 0;
+            const roundTools = [];
+            await this.streamCall(messages, onReasoning, (tool, idx) => {
+                totalTools++;
+                roundTools.push(tool);
+                onToolCall(tool, idx, round);
             });
 
-            if (!response.ok) {
-                const errData = await response.json().catch(() => ({}));
-                const errMsg = errData.error?.message || `HTTP ${response.status}: ${response.statusText}`;
-                if (response.status === 401 || response.status === 403) {
-                    throw new Error(`认证失败: ${errMsg}`);
-                }
-                if (response.status === 429) {
-                    throw new Error(`请求频率超限: ${errMsg}`);
-                }
-                throw new Error(`API错误 (${response.status}): ${errMsg}`);
-            }
+            onProgress({ type: 'roundDone', round, count: totalTools });
 
-            const data = await response.json();
-            let content = '';
-            if (data.choices && data.choices[0]) {
-                content = data.choices[0].message?.content || '';
-            } else if (data.content) {
-                content = data.content;
+            const status = onProgress({ type: 'getStatus' });
+            if (status && status.complete) return { success: true, rounds: round };
+
+            const remainingTasks = status ? status.remaining : [];
+            const roundErrors = status ? status.errors : [];
+
+            if (remainingTasks.length === 0) {
+                if (roundErrors.length > 0) {
+                    messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
+                    messages.push({ role: 'user', content: `以下工具调用失败:\n${roundErrors.join('\n')}\n请重新生成正确的内容。` });
+                } else {
+                    return { success: true, rounds: round };
+                }
             } else {
-                throw new Error('无法解析AI响应格式');
+                messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
+                messages.push({
+                    role: 'user',
+                    content: `任务清单中以下项目尚未完成:\n${remainingTasks.map(t => '□ ' + t).join('\n')}\n${
+                        roundErrors.length ? '\n错误:\n' + roundErrors.join('\n') : ''
+                    }\n请继续完成剩余任务。`,
+                });
             }
-
-            const toolCalls = parseToolCallsFromAIResponse(content);
-
-            return {
-                toolCalls,
-                rawResponse: content,
-                model: data.model || this.model,
-                usage: data.usage || null,
-            };
-        } catch (err) {
-            if (err.message.includes('API错误') || err.message.includes('认证') ||
-                err.message.includes('请求频率') || err.message.includes('无法解析')) {
-                throw err;
-            }
-            if (err.message.includes('解析')) {
-                throw err;
-            }
-            throw new Error(`网络请求失败: ${err.message}`);
         }
-    }
-
-    parseResponse(content) {
-        let jsonStr = content.trim();
-
-        const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-        if (codeBlockMatch) {
-            jsonStr = codeBlockMatch[1];
-        }
-
-        const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            jsonStr = jsonMatch[0];
-        }
-
-        try {
-            const params = JSON.parse(jsonStr);
-
-            params.heartRate = params.heartRate || 72;
-            params.rhythm = params.rhythm || 'regular';
-            params.rhythmType = params.rhythmType || 'sinus';
-            params.qrsDuration = params.qrsDuration || 90;
-            params.qtInterval = params.qtInterval || 390;
-
-            if (params.pPresent === undefined) {
-                params.pPresent = !(
-                    params.rhythmType === 'atrial_fibrillation' ||
-                    params.rhythmType === 'atrial_flutter' ||
-                    params.rhythmType === 'ventricular' ||
-                    params.rhythmType === 'ventricular_fibrillation' ||
-                    params.rhythmType === 'paced'
-                );
-            }
-
-            if (!params.qrsAmplitude && params.qrsAmplitude !== 0) {
-                params.qrsAmplitude = 1.5;
-            }
-
-            if (params.tAmplitude === undefined) {
-                params.tAmplitude = 0.3;
-            }
-
-            const defaults = {
-                pAmplitude: 0.15,
-                pDuration: 90,
-                stElevation: 0,
-                stDepression: 0,
-                stSlope: 'flat',
-                twaveShape: 'asymmetric',
-            };
-
-            for (const [key, value] of Object.entries(defaults)) {
-                if (params[key] === undefined) {
-                    params[key] = value;
-                }
-            }
-
-            return params;
-        } catch (e) {
-            throw new Error(`AI响应解析失败，请确认模型返回了有效的JSON格式。原始响应: ${content.substring(0, 200)}...`);
-        }
+        return { success: false, rounds: round, error: '达到最大重试次数' };
     }
 }

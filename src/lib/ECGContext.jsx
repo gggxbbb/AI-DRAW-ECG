@@ -14,49 +14,47 @@ const initialState = {
     aiInterpretation: null,
     aiLeadDescriptions: null,
     programmaticAnalysis: null,
+    rawReasoning: '',
+    streamProgress: '',
+    progressBar: '',
     status: { text: '', className: '' },
     isGenerating: false,
-    streamProgress: '',
     toasts: [],
 };
 
 function reducer(state, action) {
     switch (action.type) {
-        case 'SET_AI_CONFIG':
-            return { ...state, aiConfig: { ...state.aiConfig, ...action.payload } };
-        case 'SET_DISPLAY_CONFIG':
-            return { ...state, displayConfig: { ...state.displayConfig, ...action.payload } };
-        case 'SET_PARAMS':
-            return { ...state, currentParams: action.payload };
-        case 'SET_INTERPRETATION':
-            return { ...state, interpretation: action.payload };
-        case 'SET_AI_INTERPRETATION':
-            return { ...state, aiInterpretation: action.payload };
-        case 'SET_AI_LEAD_DESCRIPTIONS':
-            return { ...state, aiLeadDescriptions: action.payload };
-        case 'SET_PROGRAMMATIC_ANALYSIS':
-            return { ...state, programmaticAnalysis: action.payload };
-        case 'SET_STATUS':
-            return { ...state, status: action.payload };
-        case 'SET_GENERATING':
-            return { ...state, isGenerating: action.payload };
-        case 'SET_STREAM_PROGRESS':
-            return { ...state, streamProgress: action.payload };
+        case 'SET_AI_CONFIG': return { ...state, aiConfig: { ...state.aiConfig, ...action.payload } };
+        case 'SET_DISPLAY_CONFIG': return { ...state, displayConfig: { ...state.displayConfig, ...action.payload } };
+        case 'SET_PARAMS': return { ...state, currentParams: action.payload };
+        case 'SET_INTERPRETATION': return { ...state, interpretation: action.payload };
+        case 'SET_AI_INTERPRETATION': return { ...state, aiInterpretation: action.payload };
+        case 'SET_AI_LEAD_DESCRIPTIONS': return { ...state, aiLeadDescriptions: action.payload };
+        case 'SET_PROGRAMMATIC_ANALYSIS': return { ...state, programmaticAnalysis: action.payload };
+        case 'APPEND_REASONING': return { ...state, rawReasoning: state.rawReasoning + action.payload };
+        case 'CLEAR_REASONING': return { ...state, rawReasoning: '' };
+        case 'SET_STREAM_PROGRESS': return { ...state, streamProgress: action.payload };
+        case 'SET_PROGRESS_BAR': return { ...state, progressBar: action.payload };
+        case 'SET_STATUS': return { ...state, status: action.payload };
+        case 'SET_GENERATING': return { ...state, isGenerating: action.payload };
         case 'ADD_TOAST': {
             const id = Date.now() + Math.random();
             return { ...state, toasts: [...state.toasts, { id, ...action.payload }] };
         }
-        case 'REMOVE_TOAST':
-            return { ...state, toasts: state.toasts.filter(t => t.id !== action.payload) };
-        default:
-            return state;
+        case 'REMOVE_TOAST': return { ...state, toasts: state.toasts.filter(t => t.id !== action.payload) };
+        default: return state;
     }
 }
+
+const BAR = '\u2588';
+const SPACE = '\u2591';
+function progressBarStr(count) { return BAR.repeat(count) + SPACE.repeat(12 - count); }
 
 export function ECGProvider({ children }) {
     const [state, dispatch] = useReducer(reducer, initialState);
     const rendererRef = useRef(null);
     const aiClientRef = useRef(new AIClient());
+    let executorRef = null;
 
     const getRenderer = useCallback(() => rendererRef.current, []);
     const setRenderer = useCallback((r) => { rendererRef.current = r; }, []);
@@ -65,9 +63,7 @@ export function ECGProvider({ children }) {
         const icons = { success: '\u2713', error: '\u2717', warning: '!', info: 'i' };
         const toast = { message, type, icon: icons[type] || icons.info };
         dispatch({ type: 'ADD_TOAST', payload: toast });
-        setTimeout(() => {
-            dispatch({ type: 'REMOVE_TOAST', payload: toast.id });
-        }, 4000);
+        setTimeout(() => dispatch({ type: 'REMOVE_TOAST', payload: toast.id }), 4000);
     }, []);
 
     const loadConfig = useCallback(() => {
@@ -77,21 +73,20 @@ export function ECGProvider({ children }) {
                 const cfg = JSON.parse(saved);
                 dispatch({ type: 'SET_AI_CONFIG', payload: cfg });
                 aiClientRef.current.configure(cfg.endpoint || '', cfg.token || '', cfg.model || 'gpt-4o', cfg.temperature ?? 0.3);
-                return cfg;
             }
-        } catch (e) { /* ignore */ }
-        return null;
+        } catch (e) {}
     }, []);
 
     const saveConfig = useCallback((config) => {
         try { localStorage.setItem('ecg-ai-config', JSON.stringify(config)); }
-        catch (e) { /* ignore */ }
+        catch (e) {}
     }, []);
 
     const handleGenerateStream = useCallback(async (condition, additionalParams) => {
         dispatch({ type: 'SET_GENERATING', payload: true });
-        dispatch({ type: 'SET_STATUS', payload: { text: 'AI生成中...', className: 'status-loading' } });
+        dispatch({ type: 'CLEAR_REASONING' });
         dispatch({ type: 'SET_STREAM_PROGRESS', payload: '' });
+        dispatch({ type: 'SET_PROGRESS_BAR', payload: '' });
         dispatch({ type: 'SET_PARAMS', payload: null });
         dispatch({ type: 'SET_INTERPRETATION', payload: null });
         dispatch({ type: 'SET_AI_INTERPRETATION', payload: null });
@@ -99,53 +94,81 @@ export function ECGProvider({ children }) {
         dispatch({ type: 'SET_PROGRAMMATIC_ANALYSIS', payload: null });
 
         const renderer = rendererRef.current;
-        if (!renderer) {
-            dispatch({ type: 'SET_GENERATING', payload: false });
-            addToast('渲染器未初始化', 'error');
-            return;
-        }
+        if (!renderer) { dispatch({ type: 'SET_GENERATING', payload: false }); return; }
 
-        const executor = new ToolExecutor(renderer);
+        executorRef = new ToolExecutor(renderer);
+        renderer._autoFit = true;
         renderer.setPaperSpeed(state.displayConfig.paperSpeed);
         renderer.setGain(state.displayConfig.gain);
         renderer.setGrid(state.displayConfig.showGrid);
         renderer.setLabels(state.displayConfig.showLabels);
 
+        let totalLeads = 0;
+        let lastAction = '';
+
         try {
-            await aiClientRef.current.generateECGToolsStream(
-                condition,
-                additionalParams,
-                (toolCall, index) => {
-                    const result = executor.executeSingle(toolCall, (lead, count) => {
+            await aiClientRef.current.generateMultiRound(
+                condition, additionalParams,
+                (text, type) => {
+                    if (type === 'reasoning') {
+                        dispatch({ type: 'APPEND_REASONING', payload: text });
+                    }
+                },
+                (toolCall, idx, round) => {
+                    dispatch({ type: 'SET_STATUS', payload: { text: `第${round}轮 · 工具#${idx + 1}`, className: 'status-loading' } });
+                    const result = executorRef.executeSingle(toolCall, (lead, count) => {
+                        totalLeads = count;
                         dispatch({ type: 'SET_STREAM_PROGRESS', payload: `${lead} (${count}/12)` });
+                        dispatch({ type: 'SET_PROGRESS_BAR', payload: progressBarStr(count) });
                     });
                     if (!result.success) {
-                        addToast(`${result.errors.join('; ')}`, 'warning');
+                        dispatch({ type: 'APPEND_REASONING', payload: `\n## 错误: ${result.errors.join('; ')}\n` });
                         return;
                     }
                     if (result.action === 'init') {
-                        dispatch({ type: 'SET_PARAMS', payload: executor.storedParams });
+                        dispatch({ type: 'SET_PARAMS', payload: executorRef.storedParams });
                     }
                     if (result.action === 'drawRhythmStrip') {
-                        const prog = ecgAnalyzer.analyze(executor.storedParams);
+                        const curves = renderer._leadCurves || {};
+                        const prog = ecgAnalyzer.analyze(executorRef.storedParams, curves);
                         dispatch({ type: 'SET_PROGRAMMATIC_ANALYSIS', payload: prog });
-                        dispatch({ type: 'SET_STATUS', payload: { text: '生成解读中...', className: 'status-loading' } });
                     }
                     if (result.action === 'writeInterpretation') {
-                        dispatch({ type: 'SET_AI_INTERPRETATION', payload: executor.aiInterpretation });
-                        dispatch({ type: 'SET_STATUS', payload: { text: '生成导联描述中...', className: 'status-loading' } });
+                        dispatch({ type: 'SET_AI_INTERPRETATION', payload: executorRef.aiInterpretation });
                     }
-                    if (result.complete) {
-                        dispatch({ type: 'SET_AI_LEAD_DESCRIPTIONS', payload: executor.aiLeadDescriptions });
-                        dispatch({ type: 'SET_STATUS', payload: { text: 'AI生成完成', className: 'status-success' } });
-                        dispatch({ type: 'SET_STREAM_PROGRESS', payload: '' });
-                        addToast('心电图生成完成', 'success');
+                    if (result.complete || (result.action === 'drawRhythmStrip' && executorRef.leadCount >= 12)) {
+                        dispatch({ type: 'SET_AI_LEAD_DESCRIPTIONS', payload: executorRef.aiLeadDescriptions || null });
+                    }
+                    lastAction = result.action;
+                },
+                (info) => {
+                    if (info.type === 'round') {
+                        dispatch({ type: 'SET_STATUS', payload: { text: `第${info.round}轮生成中...`, className: 'status-loading' } });
+                    }
+                    if (info.type === 'roundDone') {
+                        dispatch({ type: 'APPEND_REASONING', payload: `\n--- 第${info.round}轮完成 (${info.count}个工具调用) ---\n` });
+                    }
+                    if (info.type === 'getStatus') {
+                        if (!executorRef) return { complete: true };
+                        return {
+                            complete: executorRef.isComplete,
+                            remaining: executorRef.getRemainingTasks(),
+                            errors: [],
+                        };
                     }
                 }
             );
+
+            dispatch({ type: 'SET_STATUS', payload: { text: 'AI生成完成', className: 'status-success' } });
+            dispatch({ type: 'SET_STREAM_PROGRESS', payload: '' });
+            dispatch({ type: 'SET_PROGRESS_BAR', payload: '' });
+            if (!executorRef.aiLeadDescriptions) {
+                dispatch({ type: 'SET_AI_LEAD_DESCRIPTIONS', payload: executorRef.aiLeadDescriptions });
+            }
+            addToast('心电图生成完成', 'success');
         } catch (err) {
             dispatch({ type: 'SET_STATUS', payload: { text: `失败: ${err.message}`, className: 'status-error' } });
-            addToast(err.message, 'error');
+            dispatch({ type: 'APPEND_REASONING', payload: `\n## 异常: ${err.message}\n` });
         } finally {
             dispatch({ type: 'SET_GENERATING', payload: false });
         }
@@ -153,34 +176,12 @@ export function ECGProvider({ children }) {
 
     const handleTestConnection = useCallback(async (endpoint, token, model, temperature) => {
         aiClientRef.current.configure(endpoint, token, model, temperature);
-        try {
-            const result = await aiClientRef.current.testConnection();
-            addToast('连接成功', 'success');
-            return { success: true, model: result.model };
-        } catch (err) {
-            addToast(err.message, 'error');
-            return { success: false, message: err.message };
-        }
+        try { const r = await aiClientRef.current.testConnection(); addToast('连接成功', 'success'); return { success: true, model: r.model }; }
+        catch (err) { addToast(err.message, 'error'); return { success: false, message: err.message }; }
     }, [addToast]);
 
-    const value = {
-        state,
-        dispatch,
-        getRenderer,
-        setRenderer,
-        addToast,
-        loadConfig,
-        saveConfig,
-        handleGenerateStream,
-        handleTestConnection,
-        aiClientRef,
-    };
-
-    return (
-        <ECGContext.Provider value={value}>
-            {children}
-        </ECGContext.Provider>
-    );
+    const value = { state, dispatch, getRenderer, setRenderer, addToast, loadConfig, saveConfig, handleGenerateStream, handleTestConnection, aiClientRef };
+    return <ECGContext.Provider value={value}>{children}</ECGContext.Provider>;
 }
 
 export function useECG() {
