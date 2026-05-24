@@ -30,14 +30,15 @@ export class ECGRenderer {
         };
     }
 
-    mmToPx(mm) { return mm * this.dpr * this.zoomLevel * 3.78; }
+    mmToPx(mm) { return mm * this.zoomLevel * 3.78; }
     timeToPx(sec) { return this.mmToPx(sec * this.paperSpeed); }
     mvToPx(mV) { return this.mmToPx(mV * this.gain); }
 
     initCanvas() {
         const container = this.canvas.parentElement;
         const rect = container.getBoundingClientRect();
-        const dpr = this.dpr;
+        const dpr = window.devicePixelRatio || 1;
+        this.dpr = dpr;
         this.displayWidth = Math.floor(rect.width);
         this.displayHeight = Math.floor(rect.height);
         this.canvas.width = this.displayWidth * dpr;
@@ -49,7 +50,7 @@ export class ECGRenderer {
         if (this._autoFit !== false) {
             const tw = this.GRID_SQUARES_W * 5 * this.LEAD_COLS;
             const th = this.GRID_SQUARES_H * 5 * this.LEAD_ROWS + this.RHYTHM_SQUARES_H * 5;
-            const bpm = dpr * 3.78;
+            const bpm = 3.78;
             this.zoomLevel = Math.min((this.displayWidth - 4) / (tw * bpm), (this.displayHeight - 4) / (th * bpm), 3);
         }
     }
@@ -104,7 +105,7 @@ export class ECGRenderer {
         ctx.textAlign = 'left';
     }
 
-    renderInit(params) {
+    renderInit(params, { keepCurves = false } = {}) {
         this.params = params;
         this.initCanvas();
         const ctx = this.ctx;
@@ -117,7 +118,7 @@ export class ECGRenderer {
         this._leadDuration = 2.5;
         this._rhythmDuration = 10;
         this._leadPanels = [];
-        this._leadCurves = {};
+        if (!keepCurves) this._leadCurves = {};
 
         for (let row = 0; row < this.LEAD_ROWS; row++) {
             for (let col = 0; col < this.LEAD_COLS; col++) {
@@ -147,16 +148,31 @@ export class ECGRenderer {
     }
 
     render(params) {
-        this.renderInit(params);
-        for (const p of this._leadPanels) {
-            const curve = this._leadCurves[p.lead];
-            if (curve) this.drawPointCurveInRect(p.x, p.y, p.w, p.h, curve, params, this._leadDuration);
-        }
-        const rcurve = this._leadCurves['II'] || [];
-        if (rcurve.length) this.drawPointCurveInRect(this._rhythmPanel.x, this._rhythmPanel.y,
-            this._rhythmPanel.w, this._rhythmPanel.h, rcurve, params, this._rhythmDuration);
+        this.renderInit(params, { keepCurves: true });
+        this._redrawStoredCurves(params);
         this._notifyInterpretation(params);
         return params;
+    }
+
+    _redrawStoredCurves(params) {
+        for (const p of this._leadPanels) {
+            const curve = this._leadCurves[p.lead];
+            if (curve?.length) {
+                this.drawPointCurveInRect(p.x, p.y, p.w, p.h, curve, params, this._leadDuration);
+            }
+        }
+        const rcurve = this._leadCurves['II'] || [];
+        if (rcurve.length) {
+            this.drawPointCurveInRect(
+                this._rhythmPanel.x,
+                this._rhythmPanel.y,
+                this._rhythmPanel.w,
+                this._rhythmPanel.h,
+                rcurve,
+                params,
+                this._rhythmDuration,
+            );
+        }
     }
 
     renderLeadCurve(lead, toolCall, params) {
@@ -252,17 +268,17 @@ export class ECGRenderer {
             let c = 'normal';
             if (params.heartRate < 60) c = 'low';
             if (params.heartRate > 100) c = 'high';
-            items.push({ text: `¤ß²v¡G${params.heartRate} bpm`, className: c });
+            items.push({ text: `ï¿½ß²vï¿½G${params.heartRate} bpm`, className: c });
         }
         const rMap = {
-            'sinus': '?©Ê¤ß«ß', 'atrial_fibrillation': '¤ß©Ð?‰V', 'atrial_flutter': '¤ß©Ð¥·‰V',
-            'ventricular': '«Ç©Ê¤ß«ß', 'paced': '°_·i¤ß«ß', 'complete_heart_block': '§¹¥þ©ÊAVB',
-            'ventricular_fibrillation': '¤ß«Ç?‰V', 'torsades': '¦yºÝ§á?«¬«Ç³t',
-            'sinus_with_pvc': '?©Ê+«Ç¦­', 'sinus_arrhythmia': '?©Ê¤ß«ß¤£ ü',
-            'sinus_with_wenckebach': '¤G«×I«¬AVB', 'sinus_with_mobitz2': '¤G«×II«¬AVB',
+            'sinus': '?ï¿½Ê¤ß«ï¿½', 'atrial_fibrillation': 'ï¿½ß©ï¿½?ï¿½V', 'atrial_flutter': 'ï¿½ß©Ð¥ï¿½ï¿½V',
+            'ventricular': 'ï¿½Ç©Ê¤ß«ï¿½', 'paced': 'ï¿½_ï¿½iï¿½ß«ï¿½', 'complete_heart_block': 'ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½AVB',
+            'ventricular_fibrillation': 'ï¿½ß«ï¿½?ï¿½V', 'torsades': 'ï¿½yï¿½Ý§ï¿½?ï¿½ï¿½ï¿½Ç³t',
+            'sinus_with_pvc': '?ï¿½ï¿½+ï¿½Ç¦ï¿½', 'sinus_arrhythmia': '?ï¿½Ê¤ß«ß¤ï¿½ï¿½ï¿½',
+            'sinus_with_wenckebach': 'ï¿½Gï¿½ï¿½Iï¿½ï¿½AVB', 'sinus_with_mobitz2': 'ï¿½Gï¿½ï¿½IIï¿½ï¿½AVB',
         };
         if (params.rhythmType && rMap[params.rhythmType]) {
-            items.push({ text: `?«ß¡G${rMap[params.rhythmType]}`, className: 'normal' });
+            items.push({ text: `?ï¿½ß¡G${rMap[params.rhythmType]}`, className: 'normal' });
         }
         return items;
     }
