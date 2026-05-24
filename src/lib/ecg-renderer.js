@@ -90,19 +90,24 @@ export class ECGRenderer {
     drawLeadLabel(x, y, name) {
         if (!this.showLabels) return;
         const ctx = this.ctx;
+        ctx.save();
         ctx.fillStyle = this.colors.label;
         ctx.font = `${9 * this.zoomLevel}px "Segoe UI", sans-serif`;
-        ctx.fillText(name, x + 2, y + 10);
+        ctx.textBaseline = 'top';
+        ctx.fillText(name, x + 2, y + (2 * this.zoomLevel));
+        ctx.restore();
     }
 
     drawInfoLabel(x, y, w) {
         if (!this.showLabels) return;
         const ctx = this.ctx;
+        ctx.save();
         ctx.fillStyle = '#aaa';
         ctx.font = `${7 * this.zoomLevel}px "Courier New", monospace`;
+        ctx.textBaseline = 'top';
         ctx.textAlign = 'right';
-        ctx.fillText('25mm/s  10mm/mV', x + w - 2, y + 10);
-        ctx.textAlign = 'left';
+        ctx.fillText('25mm/s  10mm/mV', x + w - 2, y + (2 * this.zoomLevel));
+        ctx.restore();
     }
 
     renderInit(params, { keepCurves = false } = {}) {
@@ -137,13 +142,15 @@ export class ECGRenderer {
         const fp = this._leadPanels[0];
         if (fp) this.drawInfoLabel(fp.x, fp.y, fp.w);
         if (this.showLabels) {
+            ctx.save();
             ctx.fillStyle = '#aaa';
             ctx.font = `${9 * this.zoomLevel}px "Segoe UI", sans-serif`;
+            ctx.textBaseline = 'top';
             ctx.textAlign = 'left';
-            ctx.fillText('II', this._rhythmPanel.x + 2, this._rhythmPanel.y + 10);
+            ctx.fillText('II', this._rhythmPanel.x + 2, this._rhythmPanel.y + (2 * this.zoomLevel));
             ctx.textAlign = 'right';
-            ctx.fillText('Rhythm Strip', this._rhythmPanel.x + this._rhythmPanel.w - 2, this._rhythmPanel.y + 10);
-            ctx.textAlign = 'left';
+            ctx.fillText('Rhythm Strip', this._rhythmPanel.x + this._rhythmPanel.w - 2, this._rhythmPanel.y + (2 * this.zoomLevel));
+            ctx.restore();
         }
     }
 
@@ -183,8 +190,9 @@ export class ECGRenderer {
             const allPts = [];
             for (const beat of toolCall.beats) {
                 const smoothed = catmullRomSmooth(beat.points, 0.002);
+                const beatStart = smoothed[0]?.[0] || 0;
                 for (const [t, mv] of smoothed) {
-                    allPts.push({ time: beat.onset + t, mv });
+                    allPts.push({ time: beat.onset + (t - beatStart), mv });
                 }
             }
             allPts.sort((a, b) => a.time - b.time);
@@ -200,6 +208,7 @@ export class ECGRenderer {
     drawMultiBeatInRect(rx, ry, rw, rh, pts, duration) {
         const ctx = this.ctx;
         const bl = ry + rh * 0.5;
+        const baselineMv = pts[0]?.mv || 0;
         ctx.strokeStyle = this.colors.waveform;
         ctx.lineWidth = 1.3 * this.zoomLevel;
         ctx.lineJoin = 'round'; ctx.lineCap = 'round';
@@ -208,7 +217,7 @@ export class ECGRenderer {
         const lm = this.mmToPx(1);
         for (const pt of pts) {
             const sx = rx + (pt.time / duration) * rw;
-            const sy = bl - this.mvToPx(pt.mv);
+            const sy = bl - this.mvToPx(pt.mv - baselineMv);
             if (sx > rx + rw) break;
             if (sx < rx - lm) continue;
             if (!started) { ctx.moveTo(sx, sy); started = true; }
@@ -227,14 +236,17 @@ export class ECGRenderer {
     drawPointCurveInRect(rx, ry, rw, rh, curvePoints, params, duration) {
         const ctx = this.ctx;
         const bl = ry + rh * 0.5;
-        const cycleLen = curvePoints[curvePoints.length - 1][0];
+        const time0 = curvePoints[0][0];
+        const baselineMv = curvePoints[0][1];
+        const cycleLen = curvePoints[curvePoints.length - 1][0] - time0;
+        if (cycleLen <= 0) return;
         const reps = Math.ceil(duration / cycleLen) + 1;
 
         const pts = [];
         for (let r = 0; r < reps; r++) {
             const off = r * cycleLen;
             for (const [t, mv] of curvePoints) {
-                const at = off + t;
+                const at = off + (t - time0);
                 if (at < duration) pts.push({ time: at, mv });
             }
         }
@@ -248,7 +260,7 @@ export class ECGRenderer {
         const lm = this.mmToPx(1);
         for (const pt of pts) {
             const sx = rx + (pt.time / duration) * rw;
-            const sy = bl - this.mvToPx(pt.mv);
+            const sy = bl - this.mvToPx(pt.mv - baselineMv);
             if (sx > rx + rw) break;
             if (sx < rx - lm) continue;
             if (!started) { ctx.moveTo(sx, sy); started = true; }
