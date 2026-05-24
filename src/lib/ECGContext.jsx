@@ -161,7 +161,7 @@ export function ECGProvider({ children }) {
                         };
                     }
                 },
-                state.aiConfig.reasoningEffort || undefined
+                state.aiConfig.reasoningEffort === 'off' ? 'none' : (state.aiConfig.reasoningEffort || undefined)
             );
 
             dispatch({ type: 'SET_STATUS', payload: { text: 'AI生成完成', className: 'status-success' } });

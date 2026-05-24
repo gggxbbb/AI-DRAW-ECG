@@ -108,7 +108,7 @@ export class AIClient {
         const systemPrompt = buildToolSchemaDescription();
         const messages = [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: `请根据以下生理病理描述生成心电图。\n\n患者描述：${condition}${additionalParams ? `\n补充参数：${additionalParams}` : ''}\n\n使用工具调用完成任务清单` },
+            { role: 'user', content: `请根据以下生理病理描述生成12导联心电图，依次输出全部工具调用。\n\n患者描述：${condition}${additionalParams ? `\n补充参数：${additionalParams}` : ''}` },
         ];
 
         let remaining = null;

@@ -84,6 +84,7 @@ export default function AIConfigSection() {
                         value={aiConfig.reasoningEffort || ''}
                         onChange={e => updateConfig('reasoningEffort', e.target.value)}>
                         <option value="">默认</option>
+                        <option value="off">关闭</option>
                         <option value="low">低</option>
                         <option value="medium">中</option>
                         <option value="high">高</option>
