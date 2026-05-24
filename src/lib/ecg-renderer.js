@@ -98,6 +98,10 @@ export class ECGRenderer {
         ctx.restore();
     }
 
+    getLabelTopY(y) {
+        return y + (2 * this.zoomLevel);
+    }
+
     drawInfoLabel(x, y, w) {
         if (!this.showLabels) return;
         const ctx = this.ctx;
@@ -147,9 +151,9 @@ export class ECGRenderer {
             ctx.font = `${9 * this.zoomLevel}px "Segoe UI", sans-serif`;
             ctx.textBaseline = 'top';
             ctx.textAlign = 'left';
-            ctx.fillText('II', this._rhythmPanel.x + 2, this._rhythmPanel.y + (2 * this.zoomLevel));
+            ctx.fillText('II', this._rhythmPanel.x + 2, this.getLabelTopY(this._rhythmPanel.y) - (1 * this.zoomLevel));
             ctx.textAlign = 'right';
-            ctx.fillText('Rhythm Strip', this._rhythmPanel.x + this._rhythmPanel.w - 2, this._rhythmPanel.y + (2 * this.zoomLevel));
+            ctx.fillText('Rhythm Strip', this._rhythmPanel.x + this._rhythmPanel.w - 2, this.getLabelTopY(this._rhythmPanel.y) - (1 * this.zoomLevel));
             ctx.restore();
         }
     }
