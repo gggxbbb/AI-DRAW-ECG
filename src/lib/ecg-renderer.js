@@ -92,7 +92,9 @@ export class ECGRenderer {
         const ctx = this.ctx;
         ctx.fillStyle = this.colors.label;
         ctx.font = `${9 * this.zoomLevel}px "Segoe UI", sans-serif`;
-        ctx.fillText(name, x + 2, y + 10);
+        ctx.textBaseline = 'top';
+        ctx.fillText(name, x + 2, y + (2 * this.zoomLevel));
+        ctx.textBaseline = 'alphabetic';
     }
 
     drawInfoLabel(x, y, w) {
@@ -100,9 +102,11 @@ export class ECGRenderer {
         const ctx = this.ctx;
         ctx.fillStyle = '#aaa';
         ctx.font = `${7 * this.zoomLevel}px "Courier New", monospace`;
+        ctx.textBaseline = 'top';
         ctx.textAlign = 'right';
-        ctx.fillText('25mm/s  10mm/mV', x + w - 2, y + 10);
+        ctx.fillText('25mm/s  10mm/mV', x + w - 2, y + (2 * this.zoomLevel));
         ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
     }
 
     renderInit(params, { keepCurves = false } = {}) {
@@ -139,11 +143,13 @@ export class ECGRenderer {
         if (this.showLabels) {
             ctx.fillStyle = '#aaa';
             ctx.font = `${9 * this.zoomLevel}px "Segoe UI", sans-serif`;
+            ctx.textBaseline = 'top';
             ctx.textAlign = 'left';
-            ctx.fillText('II', this._rhythmPanel.x + 2, this._rhythmPanel.y + 10);
+            ctx.fillText('II', this._rhythmPanel.x + 2, this._rhythmPanel.y + (2 * this.zoomLevel));
             ctx.textAlign = 'right';
-            ctx.fillText('Rhythm Strip', this._rhythmPanel.x + this._rhythmPanel.w - 2, this._rhythmPanel.y + 10);
+            ctx.fillText('Rhythm Strip', this._rhythmPanel.x + this._rhythmPanel.w - 2, this._rhythmPanel.y + (2 * this.zoomLevel));
             ctx.textAlign = 'left';
+            ctx.textBaseline = 'alphabetic';
         }
     }
 
