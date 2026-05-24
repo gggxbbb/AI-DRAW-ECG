@@ -268,17 +268,17 @@ export class ECGRenderer {
             let c = 'normal';
             if (params.heartRate < 60) c = 'low';
             if (params.heartRate > 100) c = 'high';
-            items.push({ text: `�߲v�G${params.heartRate} bpm`, className: c });
+            items.push({ text: `心率：${params.heartRate} bpm`, className: c });
         }
         const rMap = {
-            'sinus': '?�ʤ߫�', 'atrial_fibrillation': '�ߩ�?�V', 'atrial_flutter': '�ߩХ��V',
-            'ventricular': '�ǩʤ߫�', 'paced': '�_�i�߫�', 'complete_heart_block': '������AVB',
-            'ventricular_fibrillation': '�߫�?�V', 'torsades': '�y�ݧ�?���ǳt',
-            'sinus_with_pvc': '?��+�Ǧ�', 'sinus_arrhythmia': '?�ʤ߫ߤ���',
-            'sinus_with_wenckebach': '�G��I��AVB', 'sinus_with_mobitz2': '�G��II��AVB',
+            'sinus': '窦性心律', 'atrial_fibrillation': '心房颤动', 'atrial_flutter': '心房扑动',
+            'ventricular': '室性心动过速', 'paced': '心室起搏心律', 'complete_heart_block': 'III°AVB',
+            'ventricular_fibrillation': '心室颤动', 'torsades': '尖端扭转型室速',
+            'sinus_with_pvc': '窦性心律伴室早', 'sinus_arrhythmia': '窦性心律不齐',
+            'sinus_with_wenckebach': 'II°I型AVB', 'sinus_with_mobitz2': 'II°II型AVB',
         };
         if (params.rhythmType && rMap[params.rhythmType]) {
-            items.push({ text: `?�ߡG${rMap[params.rhythmType]}`, className: 'normal' });
+            items.push({ text: `心律：${rMap[params.rhythmType]}`, className: 'normal' });
         }
         return items;
     }
