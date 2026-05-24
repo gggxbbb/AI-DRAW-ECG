@@ -37,7 +37,7 @@ export default function App() {
                     <h1>AI ECG Generator</h1>
                 </div>
                 <span className="separator-dot"></span>
-                <p className="subtitle">AI 驱动的 12 导联心电图生成工具</p>
+                <p className="subtitle">AI 驱动的 12 导联心电图生成器</p>
             </header>
 
             <main className="main-content">
