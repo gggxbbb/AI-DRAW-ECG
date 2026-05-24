@@ -208,6 +208,7 @@ export class ECGRenderer {
     drawMultiBeatInRect(rx, ry, rw, rh, pts, duration) {
         const ctx = this.ctx;
         const bl = ry + rh * 0.5;
+        const baselineMv = pts[0]?.mv || 0;
         ctx.strokeStyle = this.colors.waveform;
         ctx.lineWidth = 1.3 * this.zoomLevel;
         ctx.lineJoin = 'round'; ctx.lineCap = 'round';
@@ -216,7 +217,7 @@ export class ECGRenderer {
         const lm = this.mmToPx(1);
         for (const pt of pts) {
             const sx = rx + (pt.time / duration) * rw;
-            const sy = bl - this.mvToPx(pt.mv);
+            const sy = bl - this.mvToPx(pt.mv - baselineMv);
             if (sx > rx + rw) break;
             if (sx < rx - lm) continue;
             if (!started) { ctx.moveTo(sx, sy); started = true; }
@@ -236,6 +237,7 @@ export class ECGRenderer {
         const ctx = this.ctx;
         const bl = ry + rh * 0.5;
         const time0 = curvePoints[0][0];
+        const baselineMv = curvePoints[0][1];
         const cycleLen = curvePoints[curvePoints.length - 1][0] - time0;
         if (cycleLen <= 0) return;
         const reps = Math.ceil(duration / cycleLen) + 1;
@@ -258,7 +260,7 @@ export class ECGRenderer {
         const lm = this.mmToPx(1);
         for (const pt of pts) {
             const sx = rx + (pt.time / duration) * rw;
-            const sy = bl - this.mvToPx(pt.mv);
+            const sy = bl - this.mvToPx(pt.mv - baselineMv);
             if (sx > rx + rw) break;
             if (sx < rx - lm) continue;
             if (!started) { ctx.moveTo(sx, sy); started = true; }
