@@ -7,7 +7,7 @@ import { ecgAnalyzer } from '../lib/ecg-analyzer';
 const ECGContext = createContext(null);
 
 const initialState = {
-    aiConfig: { endpoint: '', token: '', model: 'gpt-4o', temperature: 0.3 },
+    aiConfig: { endpoint: '', token: '', model: 'gpt-4o', temperature: 0.3, reasoningEffort: '' },
     displayConfig: { paperSpeed: 25, gain: 10, showGrid: true, showLabels: true },
     currentParams: null,
     interpretation: null,
@@ -37,10 +37,8 @@ function reducer(state, action) {
         case 'SET_PROGRESS_BAR': return { ...state, progressBar: action.payload };
         case 'SET_STATUS': return { ...state, status: action.payload };
         case 'SET_GENERATING': return { ...state, isGenerating: action.payload };
-        case 'ADD_TOAST': {
-            const id = Date.now() + Math.random();
-            return { ...state, toasts: [...state.toasts, { id, ...action.payload }] };
-        }
+        case 'ADD_TOAST':
+            return { ...state, toasts: [...state.toasts, action.payload] };
         case 'REMOVE_TOAST': return { ...state, toasts: state.toasts.filter(t => t.id !== action.payload) };
         default: return state;
     }
@@ -61,9 +59,9 @@ export function ECGProvider({ children }) {
 
     const addToast = useCallback((message, type = 'info') => {
         const icons = { success: '\u2713', error: '\u2717', warning: '!', info: 'i' };
-        const toast = { message, type, icon: icons[type] || icons.info };
-        dispatch({ type: 'ADD_TOAST', payload: toast });
-        setTimeout(() => dispatch({ type: 'REMOVE_TOAST', payload: toast.id }), 4000);
+        const id = Date.now() + Math.random();
+        dispatch({ type: 'ADD_TOAST', payload: { message, type, icon: icons[type] || icons.info, id } });
+        setTimeout(() => dispatch({ type: 'REMOVE_TOAST', payload: id }), 4000);
     }, []);
 
     const loadConfig = useCallback(() => {
@@ -104,9 +102,10 @@ export function ECGProvider({ children }) {
         renderer.setLabels(state.displayConfig.showLabels);
 
         let totalLeads = 0;
-        let lastAction = '';
+        let roundErrors = [];
 
         try {
+            roundErrors = [];
             await aiClientRef.current.generateMultiRound(
                 condition, additionalParams,
                 (text, type) => {
@@ -123,7 +122,11 @@ export function ECGProvider({ children }) {
                     });
                     if (!result.success) {
                         dispatch({ type: 'APPEND_REASONING', payload: `\n## 错误: ${result.errors.join('; ')}\n` });
+                        roundErrors.push(...result.errors);
                         return;
+                    }
+                    if (result.warned) {
+                        dispatch({ type: 'APPEND_REASONING', payload: `\n⚠ ${result.lead} 验证警告: ${result.warning}（AI 执意绘制）\n` });
                     }
                     if (result.action === 'init') {
                         dispatch({ type: 'SET_PARAMS', payload: executorRef.storedParams });
@@ -143,20 +146,22 @@ export function ECGProvider({ children }) {
                 },
                 (info) => {
                     if (info.type === 'round') {
+                        roundErrors = [];
                         dispatch({ type: 'SET_STATUS', payload: { text: `第${info.round}轮生成中...`, className: 'status-loading' } });
                     }
                     if (info.type === 'roundDone') {
                         dispatch({ type: 'APPEND_REASONING', payload: `\n--- 第${info.round}轮完成 (${info.count}个工具调用) ---\n` });
                     }
                     if (info.type === 'getStatus') {
-                        if (!executorRef) return { complete: true };
+                        if (!executorRef) return { complete: true, remaining: [], errors: [] };
                         return {
                             complete: executorRef.isComplete,
                             remaining: executorRef.getRemainingTasks(),
-                            errors: [],
+                            errors: roundErrors,
                         };
                     }
-                }
+                },
+                state.aiConfig.reasoningEffort || undefined
             );
 
             dispatch({ type: 'SET_STATUS', payload: { text: 'AI生成完成', className: 'status-success' } });

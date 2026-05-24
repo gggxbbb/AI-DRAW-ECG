@@ -217,6 +217,24 @@ html, body {
     line-height: 1.5;
 }
 
+.form-group select {
+    width: 100%;
+    padding: 6px 9px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 0.82rem;
+    font-family: inherit;
+    color: var(--text-primary);
+    background: #fff;
+    transition: border-color var(--transition);
+}
+
+.form-group select:focus {
+    outline: none;
+    border-color: var(--info);
+    box-shadow: 0 0 0 2px rgba(52,152,219,0.12);
+}
+
 .range-row {
     display: flex;
     align-items: center;

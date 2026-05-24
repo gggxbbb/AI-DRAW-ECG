@@ -8,8 +8,8 @@ export const ECG_LIMITS = {
     stDepression:  { min: -1.5, max: 0,    label: 'ST压低(mV)' },
     pointMvAbs:    { max: 5,    label: '数据点振幅绝对值(mV)' },
     pointTime:     { max: 3.0,  label: '数据点时间(s)' },
-    curveMinPoints:{ min: 6,    label: '最少数据点数' },
-    curveMinTime:  { min: 0.4,  label: '最少时间跨度(s)' },
+    curveMinPoints:{ min: 12,    label: '最少数据点数' },
+    curveMinTime:  { min: 0.5,  label: '最少时间跨度(s)' },
 };
 
 export const VALID_LEADS = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6'];
@@ -71,34 +71,58 @@ export function validateToolCall(call) {
 }
 
 export function buildToolSchemaDescription() {
-    return `你是一位资深心电生理学专家。根据用户描述的生理病理状态，生成心电图绘制工具调用数组（JSON数组格式）。
+    return `你是一位资深心电生理学专家。根据用户描述的生理病理状态，生成标准12导联心电图绘制工具调用数组。
 
-请严格只输出 JSON 数组，不要包含任何其他文本或 markdown 标记。
+输出规则：必须输出完整的 JSON 数组，不省略任何字段，不使用 markdown 代码块。
 
-工具调用顺序自由，但请完成以下所有任务后将 complete 设为 true：
+重要：请提供足够详细的数据点和描述。不要为了简洁而简化波形细节。每个导联的真实心电图包含 P波、QRS波群、ST段、T波，有时还有 U波；请确保每个波形特征都通过足够多的数据点精确表达。
 
-□ 1. initRender - 初始化画布、设置心率和节律类型
-□ 2. drawLeadCurve ×12 - 为12导联各绘制波形（I,II,III,aVR,aVL,aVF,V1-V6）
-□ 3. drawRhythmStrip - 绘制底部节律条
-□ 4. writeInterpretation - 书写AI临床解读
-□ 5. writeLeadDescriptions - 为每个导联书写描述
+---
+工具调用清单（完成全部5项）：
+
+□ 1. initRender - 初始化
+□ 2. drawLeadCurve ×12 - 12导联波形，每导联至少12个数据点
+□ 3. drawRhythmStrip - 节律条
+□ 4. writeInterpretation - 临床解读（200-500字，包含所有关键发现）
+□ 5. writeLeadDescriptions - 12导联各一段描述
 
 ---
 initRender:
 { "tool": "initRender", "paperSpeed": 25, "gain": 10, "rhythmType": "sinus", "params": { "heartRate": 72, "qrsDuration": 90, "qtInterval": 390, "qrsAxis": 30 } }
 paperSpeed: 12.5|25|50, gain: 5|10|20
-rhythmType: "sinus"|"atrial_fibrillation"|"atrial_flutter"|"ventricular"|"paced"|"complete_heart_block"|"ventricular_fibrillation"|"torsades"|"sinus_with_pvc"|"sinus_arrhythmia"|"sinus_with_wenckebach"|"sinus_with_mobitz2"
+rhythmType: 完整写出 "sinus"|"atrial_fibrillation"|"atrial_flutter"|"ventricular"|"paced"|"complete_heart_block"|"ventricular_fibrillation"|"torsades"|"sinus_with_pvc"|"sinus_arrhythmia"|"sinus_with_wenckebach"|"sinus_with_mobitz2"
 
-drawLeadCurve:
-{ "tool": "drawLeadCurve", "lead": "I", "points": [[0,0],[0.03,0.06],[0.08,-0.1],[0.12,1.5],[0.16,-0.2],[0.22,0.0],[0.28,0.02],[0.34,0.35],[0.42,0]] }
-points: [[t秒,mV],...] 至少6点、时间>=0.4s、振幅-5~+5mV、系统自动Catmull-Rom平滑
+drawLeadCurve 两种模式：
+
+a) 单周期模式（窦性心律等规则节律）：
+{ "tool": "drawLeadCurve", "lead": "I", "points": [[t0,mV0],...] }
+系统自动重复该周期填满导联面板。
+
+b) 多搏动模式（传导阻滞、早搏等不规则节律）：
+{ "tool": "drawLeadCurve", "lead": "II",
+  "beats": [
+    { "onset": 0.00, "points": [[0,0],[0.03,0.06],...,[0.45,0]] },
+    { "onset": 0.90, "points": [[0,0],[0.03,0.06],...,[0.50,0]] },
+    { "onset": 1.85, "points": [[0,0]] }
+  ]
+}
+onset 是该搏动在面板上的起始时间（秒），必须递增且覆盖 0~2.5s。
+每个 beat.points 格式同单周期模式：t0=0，后续 t 递增，跨度 0.5~1.5s。
+
+points 数组要求：
+- 描述单个心搏周期，系统会自动重复填充整个导联面板
+- points[0][0] 必须为 0（时间起点），后续 t 严格递增
+- 时间跨度 0.5 ~ 1.5s（对应心率 40-120 bpm 的 RR 间期）
+- 所有 t 值不得超过 1.5s
+- 至少12个点，推荐15-20个点以充分描绘完整的 P-QRS-ST-T-U 波形
 
 drawRhythmStrip:
 { "tool": "drawRhythmStrip", "lead": "II" }
 
 writeInterpretation:
-{ "tool": "writeInterpretation", "text": "完整临床解读文本" }
+{ "tool": "writeInterpretation", "text": "完整临床解读，包含心律分析、间期测量、电轴判断、ST-T改变描述、异常发现、鉴别诊断和最终结论，200-500字" }
 
 writeLeadDescriptions:
-{ "tool": "writeLeadDescriptions", "descriptions": {"I":"...","II":"...",...}}`;
+{ "tool": "writeLeadDescriptions", "descriptions": { "I": "详细描述P-QRS-T各波形特征...", "II": "...", ... "V6": "..." } }
+每个导联描述至少30字`;
 }

@@ -78,6 +78,17 @@ export default function AIConfigSection() {
                         <span className="range-value" id="tempValue">{aiConfig.temperature}</span>
                     </div>
                 </div>
+                <div className="form-group">
+                    <label htmlFor="reasoningEffort">推理强度（推理模型专用）</label>
+                    <select id="reasoningEffort"
+                        value={aiConfig.reasoningEffort || ''}
+                        onChange={e => updateConfig('reasoningEffort', e.target.value)}>
+                        <option value="">默认</option>
+                        <option value="low">低</option>
+                        <option value="medium">中</option>
+                        <option value="high">高</option>
+                    </select>
+                </div>
                 <button type="button" className="btn btn-outline btn-sm-full"
                     onClick={handleTest} disabled={testing}>
                     {testing ? '测试中...' : '测试连接'}

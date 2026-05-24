@@ -31,13 +31,16 @@ export class AIClient {
         } catch (err) { throw new Error(`连接失败: ${err.message}`); }
     }
 
-    async streamCall(messages, onReasoning, onToolCall) {
+    async streamCall(messages, onReasoning, onToolCall, reasoningEffort) {
         if (!this.endpoint || !this.token) throw new Error('请先配置API Endpoint和Token');
+
+        const body = { model: this.model, messages, max_tokens: this.maxTokens, temperature: this.temperature, stream: true };
+        if (reasoningEffort) body.reasoning_effort = reasoningEffort;
 
         const resp = await fetch(this.endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
-            body: JSON.stringify({ model: this.model, messages, max_tokens: this.maxTokens, temperature: this.temperature, stream: true }),
+            body: JSON.stringify(body),
         });
         if (!resp.ok) {
             const e = await resp.json().catch(() => ({}));
@@ -101,7 +104,7 @@ export class AIClient {
         return toolIndex;
     }
 
-    async generateMultiRound(condition, additionalParams, onReasoning, onToolCall, onProgress) {
+    async generateMultiRound(condition, additionalParams, onReasoning, onToolCall, onProgress, reasoningEffort) {
         const systemPrompt = buildToolSchemaDescription();
         const messages = [
             { role: 'system', content: systemPrompt },
@@ -122,7 +125,7 @@ export class AIClient {
                 totalTools++;
                 roundTools.push(tool);
                 onToolCall(tool, idx, round);
-            });
+            }, reasoningEffort);
 
             onProgress({ type: 'roundDone', round, count: totalTools });
 

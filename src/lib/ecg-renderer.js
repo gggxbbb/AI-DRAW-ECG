@@ -159,12 +159,46 @@ export class ECGRenderer {
         return params;
     }
 
-    renderLeadCurve(lead, points, params) {
+    renderLeadCurve(lead, toolCall, params) {
         const panel = this._leadPanels.find(p => p.lead === lead);
         if (!panel) return;
-        const smoothed = catmullRomSmooth(points, 0.002);
-        this._leadCurves[lead] = smoothed;
-        this.drawPointCurveInRect(panel.x, panel.y, panel.w, panel.h, smoothed, params, this._leadDuration);
+        const dur = this._leadDuration;
+        if (toolCall.beats && toolCall.beats.length > 0) {
+            const allPts = [];
+            for (const beat of toolCall.beats) {
+                const smoothed = catmullRomSmooth(beat.points, 0.002);
+                for (const [t, mv] of smoothed) {
+                    allPts.push({ time: beat.onset + t, mv });
+                }
+            }
+            allPts.sort((a, b) => a.time - b.time);
+            this._leadCurves[lead] = [[0, 0]];
+            this.drawMultiBeatInRect(panel.x, panel.y, panel.w, panel.h, allPts, dur);
+        } else {
+            const smoothed = catmullRomSmooth(toolCall.points, 0.002);
+            this._leadCurves[lead] = smoothed;
+            this.drawPointCurveInRect(panel.x, panel.y, panel.w, panel.h, smoothed, params, dur);
+        }
+    }
+
+    drawMultiBeatInRect(rx, ry, rw, rh, pts, duration) {
+        const ctx = this.ctx;
+        const bl = ry + rh * 0.5;
+        ctx.strokeStyle = this.colors.waveform;
+        ctx.lineWidth = 1.3 * this.zoomLevel;
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.beginPath();
+        let started = false;
+        const lm = this.mmToPx(1);
+        for (const pt of pts) {
+            const sx = rx + (pt.time / duration) * rw;
+            const sy = bl - this.mvToPx(pt.mv);
+            if (sx > rx + rw) break;
+            if (sx < rx - lm) continue;
+            if (!started) { ctx.moveTo(sx, sy); started = true; }
+            else ctx.lineTo(sx, sy);
+        }
+        ctx.stroke();
     }
 
     renderRhythmCurve(lead, params) {

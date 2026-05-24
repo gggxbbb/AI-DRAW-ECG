@@ -59,10 +59,29 @@ export class ToolExecutor {
             case 'drawLeadCurve': {
                 if (!this.initDone) return { success: false, errors: ['请先调用 initRender'] };
                 if (this.leadNames.includes(toolCall.lead)) return { success: false, errors: [`${toolCall.lead} 导联已绘制`] };
-                const points = toolCall.points;
-                const valid = this._validateCurve(toolCall.lead, points);
-                if (!valid.ok) return { success: false, errors: [`${toolCall.lead} 导联验证失败: ${valid.reason}`] };
-                this.renderer.renderLeadCurve(toolCall.lead, points, this.storedParams);
+                const hasBeats = toolCall.beats && toolCall.beats.length > 0;
+                const hasPoints = toolCall.points && toolCall.points.length > 0;
+                if (!hasBeats && !hasPoints) return { success: false, errors: ['必须提供 points 或 beats'] };
+                let valid = { ok: true, reason: '' };
+                if (hasBeats) {
+                    for (const beat of toolCall.beats) {
+                        valid = this._validateCurve(toolCall.lead, beat.points);
+                        if (!valid.ok) break;
+                    }
+                } else {
+                    valid = this._validateCurve(toolCall.lead, toolCall.points);
+                }
+                if (!valid.ok) {
+                    if (toolCall.insist) {
+                        this.renderer.renderLeadCurve(toolCall.lead, toolCall, this.storedParams);
+                        this.leadCount++;
+                        this.leadNames.push(toolCall.lead);
+                        if (onLeadRendered) onLeadRendered(toolCall.lead, this.leadCount);
+                        return { success: true, action: 'drawLeadCurve', lead: toolCall.lead, count: this.leadCount, warned: true, warning: valid.reason };
+                    }
+                    return { success: false, errors: [`${toolCall.lead} 导联验证失败: ${valid.reason}（可添加 "insist": true 强制执行）`] };
+                }
+                this.renderer.renderLeadCurve(toolCall.lead, toolCall, this.storedParams);
                 this.leadCount++;
                 this.leadNames.push(toolCall.lead);
                 if (onLeadRendered) onLeadRendered(toolCall.lead, this.leadCount);
