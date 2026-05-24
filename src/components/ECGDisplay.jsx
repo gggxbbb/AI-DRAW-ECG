@@ -10,7 +10,8 @@ export default function ECGDisplay() {
 
     useEffect(() => {
         const canvas = canvasRef.current;
-        if (!canvas) return;
+        const container = containerRef.current;
+        if (!canvas || !container) return;
         const renderer = new ECGRenderer(canvas);
         renderer.onInterpretationChange = (data) => {
             dispatch({ type: 'SET_INTERPRETATION', payload: data });
@@ -24,6 +25,25 @@ export default function ECGDisplay() {
                 qrsDuration: 90, qtInterval: 390, qrsAxis: 30,
             });
         }, 100);
+
+        let rafId = null;
+        const redraw = () => {
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(() => {
+                if (!renderer.params) return;
+                renderer.render(renderer.params);
+            });
+        };
+
+        const observer = new ResizeObserver(redraw);
+        observer.observe(container);
+        window.addEventListener('orientationchange', redraw);
+
+        return () => {
+            if (rafId) cancelAnimationFrame(rafId);
+            observer.disconnect();
+            window.removeEventListener('orientationchange', redraw);
+        };
     }, [setRenderer, dispatch]);
 
     useEffect(() => {
@@ -33,7 +53,7 @@ export default function ECGDisplay() {
         renderer.setGain(displayConfig.gain);
         renderer.setGrid(displayConfig.showGrid);
         renderer.setLabels(displayConfig.showLabels);
-        renderer.renderInit(currentParams);
+        renderer.render(currentParams);
     }, [displayConfig]);
 
     return (
