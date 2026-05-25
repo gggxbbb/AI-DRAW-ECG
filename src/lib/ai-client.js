@@ -173,6 +173,7 @@ export class AIClient {
                     return { success: true, rounds: round };
                 }
             } else if (remainingTasks.length === 0 && analysisFeedback) {
+                if (totalTools === 0) return { success: true, rounds: round };
                 if (analysisRounds >= 2) {
                     return { success: true, rounds: round };
                 }
