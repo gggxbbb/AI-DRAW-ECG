@@ -87,11 +87,6 @@ class PyodideRuntime {
             try { return proxy.toJs(); } catch (e) { return {}; }
         };
 
-        const normalizePoints = (pts) => {
-            if (!pts || !pts.length || Array.isArray(pts[0])) return pts;
-            return pts.map(p => [p[0], p[1]]);
-        };
-
         const VALID_LEADS = ['I','II','III','aVR','aVL','aVF','V1','V2','V3','V4','V5','V6'];
 
         pyodide.globals.set('ecg_init', (rhythmType, hr, qrsDuration, qtInterval, qrsAxis) => {
@@ -149,7 +144,7 @@ class PyodideRuntime {
                 pyPrint(msg); return msg;
             }
             let pts;
-            try { pts = normalizePoints(toJsArr(pointsProxy)); } catch (e) {
+            try { pts = toJsArr(pointsProxy); } catch (e) {
                 const msg = `[ecg_draw_lead] ERROR: ${leadStr} 数据解析失败 - ${e.message}`;
                 pyPrint(msg); return msg;
             }
@@ -166,6 +161,36 @@ class PyodideRuntime {
             const label = isRedraw ? ' (重绘)' : '';
             const curve = rend._leadCurves[leadStr] || [];
             const msg = `[ecg_draw_lead] ${leadStr}${label} | ${pts.length}点 → ${curve.length}平滑点 | ${exec.leadCount}/12 导联完成`;
+            pyPrint(msg);
+            return msg;
+        });
+
+        pyodide.globals.set('ecg_draw_cycle', (lead, pointsProxy) => {
+            if (!exec.initDone) {
+                const msg = '[ecg_draw_cycle] ERROR: 请先调用 ecg_init';
+                pyPrint(msg); return msg;
+            }
+            const leadStr = String(lead);
+            if (!VALID_LEADS.includes(leadStr)) {
+                const msg = `[ecg_draw_cycle] ERROR: 无效导联名 '${leadStr}'`;
+                pyPrint(msg); return msg;
+            }
+            let pts;
+            try { pts = toJsArr(pointsProxy); } catch (e) {
+                const msg = `[ecg_draw_cycle] ERROR: ${leadStr} 数据解析失败 - ${e.message}`;
+                pyPrint(msg); return msg;
+            }
+            if (!pts || pts.length < 4) {
+                const msg = `[ecg_draw_cycle] ERROR: ${leadStr} 数据点不足 (${pts ? pts.length : 0})`;
+                pyPrint(msg); return msg;
+            }
+            rend.renderLeadCurveCycle(leadStr, pts, exec.storedParams);
+            if (!exec.leadNames.includes(leadStr)) {
+                exec.leadCount++;
+                exec.leadNames.push(leadStr);
+            }
+            const curve = rend._leadCurves[leadStr] || [];
+            const msg = `[ecg_draw_cycle] ${leadStr} | ${pts.length}点/循环 → ${curve.length}平滑点 | ${exec.leadCount}/12 导联完成`;
             pyPrint(msg);
             return msg;
         });
@@ -191,7 +216,7 @@ class PyodideRuntime {
                     }
                     let pts;
                     try {
-                        pts = normalizePoints(toJsArr(pointsProxy));
+                        pts = toJsArr(pointsProxy);
                     } catch (e) {
                         errors.push(`${leadStr}: 数据解析失败`);
                         continue;
@@ -234,7 +259,7 @@ class PyodideRuntime {
 
     _cleanupBridge(pyodide) {
         try {
-            const names = ['ecg_init','ecg_draw_lead','ecg_draw_all','ecg_draw_rhythm','ecg_set_header','ecg_get_params','_ecg_log'];
+            const names = ['ecg_init','ecg_draw_lead','ecg_draw_cycle','ecg_draw_all','ecg_draw_rhythm','ecg_set_header','ecg_get_params','_ecg_log'];
             for (const n of names) {
                 pyodide.globals.delete(n);
             }

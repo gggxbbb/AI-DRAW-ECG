@@ -425,6 +425,14 @@ export class ECGRenderer {
         this.drawPointCurveInRect(panel.x, panel.y, panel.w, panel.h, smoothed, params, this._leadDuration, true);
     }
 
+    renderLeadCurveCycle(lead, points, params) {
+        const panel = this._leadPanels.find(p => p.lead === lead);
+        if (!panel) return;
+        const smoothed = catmullRomSmooth(points, 0.002);
+        this._leadCurves[lead] = smoothed;
+        this.drawPointCurveInRect(panel.x, panel.y, panel.w, panel.h, smoothed, params, this._leadDuration);
+    }
+
     drawMultiBeatInRect(rx, ry, rw, rh, pts, duration) {
         const ctx = this.ctx;
         const bl = ry + rh * 0.5;
