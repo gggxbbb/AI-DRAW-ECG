@@ -137,7 +137,16 @@ export function buildECGSystemPrompt() {
 
 工作流程：首先调用 initRender 初始化画布，然后使用 writeHeaderInfo 写入标题。绘制12导联时，优先使用 drawLeadCurve（单周期，程序自动循环），每个导联一个调用。仅在复杂情况（多形态波形、不规则节律、碎裂QRS/delta波等精细波形）下使用 CSV 模式（drawAllLeadsCSV 或 drawLeadCurveCSV）。绘制完成后调用 drawRhythmStrip 绘制节律带，最后使用 writeInterpretation 和 writeLeadDescriptions 撰写解读。
 
-你可以使用 runPythonCode 在浏览器 Python 环境中运行计算（含 numpy），stdout 结果会立即返回给你，可用于计算复杂波形、批量生成 CSV。
+你可以使用 runPythonCode 在浏览器 Python 环境中运行计算（含 numpy），stdout 结果会立即返回给你。Python 环境已内置以下快捷函数，可直接调用完成绘制，无需通过工具调用再传数据：
+
+- ecg_init(rhythm_type, heart_rate, qrs_duration, qt_interval, qrs_axis) — 初始化画布
+- ecg_set_header(text) — 设置标题
+- ecg_draw_lead(lead, points) — 绘制单个导联，points = [[t, mV], ...]
+- ecg_draw_all(leads) — 一次性绘制全部12导联，leads = {"I": [[t,mV],...], "II": [...], ..., "V6": [...]}
+- ecg_draw_rhythm(lead) — 绘制节律带（默认II导联）
+- ecg_get_params() — 返回已存储参数 dict
+
+推荐用法：在 Python 中用 numpy 计算全部12导联波形 → 调用 ecg_init + ecg_set_header + ecg_draw_all 一次性完成绘制 → 后续用工具调用写解读即可。
 
 关于程序分析反馈：绘制完成后系统会运行程序化波形分析。该分析纯属自动化检测，可能将你刻意绘制的病理性改变误判为"异常"。你作为心电专家判断力远优于自动化程序，若确信自己的波形正确反映了病情，直接无视分析反馈停止即可。若确实需要修正波形，直接使用 drawLeadCurve 或 drawLeadCurveCSV 重绘对应导联（无需重复 initRender）。
 
@@ -379,13 +388,13 @@ export function buildOpenAITools() {
             type: 'function',
             function: {
                 name: 'runPythonCode',
-                description: '在浏览器 Pyodide (CPython 3.12 + numpy) 环境中执行 Python 代码。stdout 立即返回。用于计算复杂病理波形、批量生成 CSV、验证导联关系。变量跨调用保留。',
+                description: '在浏览器 Pyodide (CPython 3.12 + numpy) 环境中执行 Python 代码。内置 ecg_init/ecg_draw_lead/ecg_draw_all/ecg_draw_rhythm/ecg_set_header/ecg_get_params 快捷函数，可直接在 Python 中完成画布绘制。变量跨调用保留。',
                 parameters: {
                     type: 'object',
                     properties: {
                         code: {
                             type: 'string',
-                            description: 'Python 代码，可 import numpy as np，用 print() 输出结果'
+                            description: 'Python 代码。可直接调用 ecg_init(), ecg_draw_all(), ecg_draw_lead() 等快捷函数完成绘制'
                         }
                     },
                     required: ['code']

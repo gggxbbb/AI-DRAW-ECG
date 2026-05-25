@@ -566,7 +566,7 @@ function catmullRomSpline(p0, p1, p2, p3, t) {
     return 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
 }
 
-function catmullRomSmooth(points, step) {
+export function catmullRomSmooth(points, step) {
     if (points.length < 2) return points.map(p => [p[0], p[1]]);
     const result = [];
     const n = points.length;

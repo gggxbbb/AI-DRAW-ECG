@@ -49,6 +49,7 @@ export class AIClient {
     }
 
     abort() {
+        this._halted = true;
         if (this._abortController) {
             this._abortController.abort();
             this._abortController = null;
@@ -137,6 +138,8 @@ export class AIClient {
     async agentLoop(condition, additionalParams, onReasoning, executeTool, onProgress, reasoningEffort) {
         if (!this.client) throw new Error('请先配置API Endpoint和Token');
 
+        this._halted = false;
+
         const systemPrompt = buildECGSystemPrompt();
         const tools = buildOpenAITools();
 
@@ -152,6 +155,7 @@ export class AIClient {
         let feedbackPending = false;
 
         while (iteration < maxIterations) {
+            if (this._halted) return { success: false, iterations: iteration, aborted: true };
             iteration++;
             onProgress({ type: 'iteration', iteration });
 
@@ -198,6 +202,7 @@ export class AIClient {
                     onProgress({ type: 'toolStart', toolCall: normalized, iteration });
                     const execResult = await executeTool(normalized);
                     onProgress({ type: 'toolEnd', toolCall: normalized, result: execResult, iteration });
+                    if (this._halted) return { success: false, iterations: iteration, aborted: true };
                     messages.push({
                         role: 'tool',
                         tool_call_id: tc.id,

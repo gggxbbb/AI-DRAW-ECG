@@ -184,6 +184,7 @@ export class ToolExecutor {
                 return { success: true, action: 'writeLeadDescriptions', complete: true };
             }
             case 'runPythonCode': {
+                pyodideRuntime.setContext(this, this.renderer);
                 const result = await pyodideRuntime.run(toolCall.code);
                 this.lastPythonOutput = result;
                 return { success: true, action: 'runPythonCode', result };
