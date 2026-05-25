@@ -275,7 +275,7 @@ export class ECGRenderer {
         if (!panel) return;
         const smoothed = catmullRomSmooth(points, 0.002);
         this._leadCurves[lead] = smoothed;
-        this.drawPointCurveInRect(panel.x, panel.y, panel.w, panel.h, smoothed, params, this._leadDuration);
+        this.drawPointCurveInRect(panel.x, panel.y, panel.w, panel.h, smoothed, params, this._leadDuration, true);
     }
 
     drawMultiBeatInRect(rx, ry, rw, rh, pts, duration) {
@@ -306,14 +306,21 @@ export class ECGRenderer {
         this.drawPointCurveInRect(rp.x, rp.y, rp.w, rp.h, curve, params, this._rhythmDuration);
     }
 
-    drawPointCurveInRect(rx, ry, rw, rh, curvePoints, params, duration) {
+    renderRhythmCurveCSV(points, params) {
+        const rp = this._rhythmPanel;
+        if (!rp || !points.length) return;
+        const smoothed = catmullRomSmooth(points, 0.002);
+        this.drawPointCurveInRect(rp.x, rp.y, rp.w, rp.h, smoothed, params, this._rhythmDuration, true);
+    }
+
+    drawPointCurveInRect(rx, ry, rw, rh, curvePoints, params, duration, noRepeat = false) {
         const ctx = this.ctx;
         const bl = ry + rh * 0.5;
         const time0 = curvePoints[0][0];
         const baselineMv = curvePoints[0][1];
         const cycleLen = curvePoints[curvePoints.length - 1][0] - time0;
         if (cycleLen <= 0) return;
-        const reps = Math.ceil(duration / cycleLen) + 1;
+        const reps = noRepeat ? 1 : Math.ceil(duration / cycleLen) + 1;
 
         const pts = [];
         for (let r = 0; r < reps; r++) {

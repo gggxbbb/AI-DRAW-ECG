@@ -23,7 +23,7 @@ export class ToolExecutor {
         const allLeads = ['I','II','III','aVR','aVL','aVF','V1','V2','V3','V4','V5','V6'];
         const missing = allLeads.filter(l => !this.leadNames.includes(l));
         if (missing.length) tasks.push(`drawLeadCurve 缺少导联: ${missing.join(',')}`);
-        if (!this.rhythmDone) tasks.push('调用 drawRhythmStrip 绘制节律条');
+        if (!this.rhythmDone) tasks.push('调用 drawRhythmStrip 或 drawRhythmStripCSV 绘制节律条');
         if (!this.interpDone) tasks.push('调用 writeInterpretation 书写AI解读');
         if (!this.descriptionsDone) tasks.push('调用 writeLeadDescriptions 书写导联描述');
         return tasks;
@@ -55,8 +55,6 @@ export class ToolExecutor {
                 this.rhythmDone = false;
                 this.interpDone = false;
                 this.descriptionsDone = false;
-                this.renderer.setPaperSpeed(toolCall.paperSpeed || 25);
-                this.renderer.setGain(toolCall.gain || 10);
                 this.renderer._headerText = null;
         this.programmaticAnalysis = null;
         this.rhythmConsistency = null;
@@ -67,7 +65,6 @@ export class ToolExecutor {
             }
             case 'drawLeadCurve': {
                 if (!this.initDone) return { success: false, errors: ['请先调用 initRender'] };
-                if (this.leadNames.includes(toolCall.lead)) return { success: false, errors: [`${toolCall.lead} 导联已绘制`] };
                 const hasBeats = toolCall.beats && toolCall.beats.length > 0;
                 const hasPoints = toolCall.points && toolCall.points.length > 0;
                 if (!hasBeats && !hasPoints) return { success: false, errors: ['必须提供 points 或 beats'] };
@@ -83,18 +80,23 @@ export class ToolExecutor {
                 if (!valid.ok) {
                     if (toolCall.insist) {
                         this.renderer.renderLeadCurve(toolCall.lead, toolCall, this.storedParams);
-                        this.leadCount++;
-                        this.leadNames.push(toolCall.lead);
+                        if (!this.leadNames.includes(toolCall.lead)) {
+                            this.leadCount++;
+                            this.leadNames.push(toolCall.lead);
+                        }
                         if (onLeadRendered) onLeadRendered(toolCall.lead, this.leadCount);
                         return { success: true, action: 'drawLeadCurve', lead: toolCall.lead, count: this.leadCount, warned: true, warning: valid.reason };
                     }
                     return { success: false, errors: [`${toolCall.lead} 导联验证失败: ${valid.reason}（可添加 "insist": true 强制执行）`] };
                 }
+                const isRedraw = this.leadNames.includes(toolCall.lead);
                 this.renderer.renderLeadCurve(toolCall.lead, toolCall, this.storedParams);
-                this.leadCount++;
-                this.leadNames.push(toolCall.lead);
+                if (!isRedraw) {
+                    this.leadCount++;
+                    this.leadNames.push(toolCall.lead);
+                }
                 if (onLeadRendered) onLeadRendered(toolCall.lead, this.leadCount);
-                return { success: true, action: 'drawLeadCurve', lead: toolCall.lead, count: this.leadCount };
+                return { success: true, action: 'drawLeadCurve', lead: toolCall.lead, count: this.leadCount, redraw: isRedraw };
             }
             case 'drawRhythmStrip': {
                 if (this.leadCount < 12) return { success: false, errors: [`只完成 ${this.leadCount}/12 个导联`] };
@@ -102,16 +104,26 @@ export class ToolExecutor {
                 this.rhythmDone = true;
                 return { success: true, action: 'drawRhythmStrip' };
             }
+            case 'drawRhythmStripCSV': {
+                if (this.leadCount < 12) return { success: false, errors: [`只完成 ${this.leadCount}/12 个导联`] };
+                const parsed = this._parseCSVPoints(toolCall.csv);
+                if (!parsed.ok) return { success: false, errors: [`节律带CSV解析失败: ${parsed.reason}`] };
+                this.renderer.renderRhythmCurveCSV(parsed.points, this.storedParams);
+                this.rhythmDone = true;
+                return { success: true, action: 'drawRhythmStripCSV' };
+            }
             case 'drawLeadCurveCSV': {
                 if (!this.initDone) return { success: false, errors: ['请先调用 initRender'] };
-                if (this.leadNames.includes(toolCall.lead)) return { success: false, errors: [`${toolCall.lead} 导联已绘制`] };
                 const parsed = this._parseCSVPoints(toolCall.csv);
                 if (!parsed.ok) return { success: false, errors: [`${toolCall.lead} CSV解析失败: ${parsed.reason}`] };
+                const isRedraw = this.leadNames.includes(toolCall.lead);
                 this.renderer.renderLeadCurveCSV(toolCall.lead, parsed.points, this.storedParams);
-                this.leadCount++;
-                this.leadNames.push(toolCall.lead);
+                if (!isRedraw) {
+                    this.leadCount++;
+                    this.leadNames.push(toolCall.lead);
+                }
                 if (onLeadRendered) onLeadRendered(toolCall.lead, this.leadCount);
-                return { success: true, action: 'drawLeadCurveCSV', lead: toolCall.lead, count: this.leadCount };
+                return { success: true, action: 'drawLeadCurveCSV', lead: toolCall.lead, count: this.leadCount, redraw: isRedraw };
             }
             case 'writeHeaderInfo': {
                 this.headerInfo = toolCall.text;

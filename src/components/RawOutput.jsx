@@ -7,12 +7,13 @@ const CATEGORY_STYLES = {
     '状态': { color: '#7eb8da', label: '状态', icon: '\u{1F4CB}' },
     '错误': { color: '#e06c75', label: '错误', icon: '\u2717' },
     '警告': { color: '#e5c07b', label: '警告', icon: '\u26A0' },
+    '修正': { color: '#c678dd', label: '修正', icon: '\u{1F504}' },
 };
 
 function parseWithCategories(raw) {
     if (!raw) return [];
     const segments = [];
-    const re = /\[(\/)?(推理|工具|状态|错误|警告)\]/g;
+    const re = /\[(\/)?(推理|工具|状态|错误|警告|修正)\]/g;
     let lastIdx = 0;
     let currentCat = null;
     let catStart = -1;

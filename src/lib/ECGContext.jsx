@@ -177,6 +177,8 @@ export function ECGProvider({ children }) {
         let totalLeads = 0;
         let roundErrors = [];
         let currentTokenUsage = null;
+        let currentRound = 0;
+        let correctionLog = [];
 
         try {
             roundErrors = [];
@@ -191,8 +193,8 @@ export function ECGProvider({ children }) {
                 },
                 (toolCall, idx, round) => {
                     dispatch({ type: 'SET_STATUS', payload: { text: `第${round}轮 · 工具#${idx + 1}`, className: 'status-loading' } });
-                    const toolLabel = ['drawLeadCurve', 'drawLeadCurveCSV'].includes(toolCall.tool)
-                        ? `${toolCall.tool.replace('drawLeadCurve', '导联').replace('CSV', '(CSV)')} → ${toolCall.lead}`
+                    const toolLabel = ['drawLeadCurve', 'drawLeadCurveCSV', 'drawRhythmStripCSV'].includes(toolCall.tool)
+                        ? `${toolCall.tool.replace('drawLeadCurve', '导联').replace('CSV', '(CSV)').replace('drawRhythmStripCSV', '节律带(CSV)')}${toolCall.lead ? ' → ' + toolCall.lead : ''}`
                         : toolCall.tool;
                     dispatch({ type: 'APPEND_REASONING', payload: toolLabel, category: '工具' });
                     const result = executorRef.executeSingle(toolCall, (lead, count) => {
@@ -226,7 +228,7 @@ export function ECGProvider({ children }) {
                             executorRef.rhythmConsistency = ecgAnalyzer.checkRhythmConsistency(executorRef.storedParams, curves);
                         }
                     }
-                    if (result.action === 'drawRhythmStrip') {
+                    if (result.action === 'drawRhythmStrip' || result.action === 'drawRhythmStripCSV') {
                         dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'rhythm' });
                         dispatch({ type: 'SET_PROGRESS_BAR', payload: '节律带' });
                         const curves = renderer._leadCurves || {};
@@ -251,6 +253,7 @@ export function ECGProvider({ children }) {
                 (info) => {
                     if (info.type === 'round') {
                         roundErrors = [];
+                        currentRound = info.round;
                         const rwNote = executorRef.redrawRound ? ' [重绘]' : '';
                         dispatch({ type: 'SET_STATUS', payload: { text: `第${info.round}轮生成中...${rwNote}`, className: 'status-loading' } });
                     }
@@ -277,6 +280,17 @@ export function ECGProvider({ children }) {
                                 parts.push(`节律一致性检查失败：${rhythm.issues.join('；')}`);
                             }
                             if (parts.length) analysisFeedback = parts.join('\n');
+                        }
+                        if (analysisFeedback && executorRef.isComplete && executorRef.programmaticAnalysis) {
+                            const abns = executorRef.programmaticAnalysis.findings.filter(
+                                f => f.severity === 'abnormal' || f.severity === 'critical'
+                            );
+                            correctionLog.push({
+                                round: currentRound,
+                                conclusion: executorRef.programmaticAnalysis.conclusion,
+                                findings: abns.map(f => f.text),
+                                rhythmIssues: rhythm?.issues || [],
+                            });
                         }
                         return {
                             complete: executorRef.isComplete,
@@ -308,6 +322,29 @@ export function ECGProvider({ children }) {
                 dispatch({ type: 'SET_AI_LEAD_DESCRIPTIONS', payload: executorRef.aiLeadDescriptions });
             }
             addToast('心电图生成完成', 'success');
+
+            if (correctionLog.length > 0) {
+                const lines = ['\n---', '[修正] 修正摘要'];
+                for (const c of correctionLog) {
+                    const items = [...c.findings];
+                    if (items.length) {
+                        lines.push(`[修正] 轮${c.round}: ${c.conclusion} | ${items.join('；')}`);
+                    } else {
+                        lines.push(`[修正] 轮${c.round}: ${c.conclusion}`);
+                    }
+                }
+                const final = executorRef.programmaticAnalysis;
+                if (final) {
+                    const remAbns = final.findings.filter(f => f.severity === 'abnormal' || f.severity === 'critical');
+                    if (remAbns.length) {
+                        lines.push(`[修正] 最终: ${final.conclusion} | 残余: ${remAbns.map(f => f.text).join('；')}`);
+                    } else {
+                        lines.push(`[修正] 最终: ${final.conclusion}`);
+                    }
+                }
+                lines.push('---');
+                dispatch({ type: 'APPEND_REASONING', payload: lines.join('\n'), category: '修正' });
+            }
 
             const historyRecord = {
                 id: autoSaveIdRef.current,

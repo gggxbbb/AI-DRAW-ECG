@@ -128,7 +128,7 @@ export class AIClient {
         let remaining = null;
         let errors = [];
         let round = 0;
-        let analysisRound = false;
+        let analysisRounds = 0;
 
         while (round < 5) {
             round++;
@@ -173,12 +173,12 @@ export class AIClient {
                     return { success: true, rounds: round };
                 }
             } else if (remainingTasks.length === 0 && analysisFeedback) {
-                if (analysisRound) {
+                if (analysisRounds >= 2) {
                     return { success: true, rounds: round };
                 }
-                analysisRound = true;
+                analysisRounds++;
                 messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
-                messages.push({ role: 'user', content: `所有工具已完成，程序分析结果（仅供AI参考，确信正确可直接无视）：\n\n${analysisFeedback}\n\n如果以上结论与病情相符，空回复确认。仅当波形明显有误时才需修正重绘。` });
+                messages.push({ role: 'user', content: `所有工具已完成，程序自动分析结果如下（仅供参考，纯属自动化检测，无法替代临床判断）：\n\n${analysisFeedback}\n\n程序分析可能将你刻意绘制的病理性改变误报为"异常"。如果你确信这些波形正确反映了病情，直接空回复确认即可。仅当你认为波形确实画错了（与病情不符）时才修正：直接输出 drawLeadCurve 或 drawLeadCurveCSV 重绘对应导联（画布已就绪，无需 initRender）。` });
             } else {
                 const ctx = status?.context;
                 const isWritingOnly = remainingTasks.every(t =>
@@ -196,13 +196,13 @@ export class AIClient {
                     contextNote = `\n\n心电图上下文：\n患者描述：${condition}\n心律：${rMap[p.rhythmType]||p.rhythmType} | 心率：${p.heartRate}bpm | QRS：${p.qrsDuration}ms | QT：${p.qtInterval}ms | 电轴：${p.qrsAxis}°\n已绘制：${ctx.leadsDone?.join(',')||'全部12导联'}\n标题：${ctx.headerInfo||'无'}\n\n请根据以上参数和已绘制的波形数据，为这幅心电图撰写临床解读和导联描述。`;
                 }
                 if (totalTools === 0) {
-                    if (analysisRound && status && status.complete) {
+                    if (analysisRounds > 0 && status && status.complete) {
                         return { success: true, rounds: round };
                     }
                     if (roundContent) {
                         messages.push({ role: 'assistant', content: roundContent });
                     }
-                    messages.push({ role: 'user', content: `以上是上轮你的输出文本（未识别到有效工具调用JSON）。请**直接**输出JSON工具调用对象，跳过分析思考，不要解释。立即以 { 开头：\n\n{ "tool": "initRender", "paperSpeed": 25, "gain": 10, "rhythmType": "sinus", "params": { ... } }\n{ "tool": "drawLeadCurveCSV", "lead": "I", "csv": "0.00,0.00\\n0.02,0.02\\n..." }\n...` });
+                    messages.push({ role: 'user', content: `以上是上轮你的输出文本（未识别到有效工具调用JSON）。请**直接**输出JSON工具调用对象，跳过分析思考，不要解释。立即以 { 开头：\n\n{ "tool": "initRender", "rhythmType": "sinus", "params": { ... } }\n{ "tool": "drawLeadCurveCSV", "lead": "I", "csv": "0.00,0.00\\n0.02,0.02\\n..." }\n...` });
                 } else {
                     messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
                     const alreadyDone = remainingTasks.length > 0
