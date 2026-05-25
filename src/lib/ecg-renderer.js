@@ -399,6 +399,10 @@ export class ECGRenderer {
         const a = document.createElement('a');
         a.download = fn; a.href = this.exportImage(); a.click();
     }
+
+    getAllCurves() { return this._leadCurves; }
+
+    restoreCurves(curves) { this._leadCurves = curves; }
 }
 
 function catmullRomSpline(p0, p1, p2, p3, t) {

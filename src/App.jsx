@@ -5,16 +5,18 @@ import ConditionInput from './components/ConditionInput';
 import DisplayOptionsSection from './components/DisplayOptionsSection';
 import InterpretationSection from './components/InterpretationSection';
 import RawOutput from './components/RawOutput';
+import HistoryPanel from './components/HistoryPanel';
 import ECGDisplay from './components/ECGDisplay';
 import Toast from './components/Toast';
 import './index.css';
 
 export default function App() {
-    const { loadConfig } = useECG();
+    const { loadConfig, loadHistoryInit } = useECG();
 
     useEffect(() => {
         loadConfig();
-    }, [loadConfig]);
+        loadHistoryInit();
+    }, [loadConfig, loadHistoryInit]);
 
     useEffect(() => {
         const handleKeyDown = (e) => {
@@ -43,6 +45,7 @@ export default function App() {
             <main className="main-content">
                 <aside className="control-panel">
                     <AIConfigSection />
+                    <HistoryPanel />
                     <ConditionInput />
                     <DisplayOptionsSection />
                     <InterpretationSection />

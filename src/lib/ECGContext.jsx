@@ -3,6 +3,7 @@ import { ECGRenderer } from '../lib/ecg-renderer';
 import { AIClient } from '../lib/ai-client';
 import { ToolExecutor } from '../lib/tool-executor';
 import { ecgAnalyzer } from '../lib/ecg-analyzer';
+import { loadHistory, addHistoryRecord, deleteHistoryRecord, clearHistory } from '../lib/ecg-history';
 
 const ECGContext = createContext(null);
 
@@ -24,6 +25,7 @@ const initialState = {
     isGenerating: false,
     tokenUsage: null,
     toasts: [],
+    history: [],
 };
 
 function reducer(state, action) {
@@ -53,6 +55,9 @@ function reducer(state, action) {
         case 'ADD_TOAST':
             return { ...state, toasts: [...state.toasts, action.payload] };
         case 'REMOVE_TOAST': return { ...state, toasts: state.toasts.filter(t => t.id !== action.payload) };
+        case 'SET_HISTORY': return { ...state, history: action.payload };
+        case 'DELETE_FROM_HISTORY': return { ...state, history: state.history.filter(r => r.id !== action.payload) };
+        case 'CLEAR_HISTORY': return { ...state, history: [] };
         default: return state;
     }
 }
@@ -67,6 +72,7 @@ export function ECGProvider({ children }) {
     const [state, dispatch] = useReducer(reducer, initialState);
     const rendererRef = useRef(null);
     const aiClientRef = useRef(new AIClient());
+    const autoSaveIdRef = useRef(null);
     let executorRef = null;
 
     const getRenderer = useCallback(() => rendererRef.current, []);
@@ -95,6 +101,52 @@ export function ECGProvider({ children }) {
         catch (e) {}
     }, []);
 
+    const loadHistoryInit = useCallback(() => {
+        dispatch({ type: 'SET_HISTORY', payload: loadHistory() });
+    }, []);
+
+    const handleSaveToHistory = useCallback((record) => {
+        const history = addHistoryRecord(record);
+        dispatch({ type: 'SET_HISTORY', payload: history });
+        autoSaveIdRef.current = record.id;
+    }, []);
+
+    const handleDeleteHistory = useCallback((id) => {
+        const history = deleteHistoryRecord(id);
+        dispatch({ type: 'SET_HISTORY', payload: history });
+    }, []);
+
+    const handleClearHistory = useCallback(() => {
+        clearHistory();
+        dispatch({ type: 'CLEAR_HISTORY' });
+    }, []);
+
+    const handleRestoreHistory = useCallback((record) => {
+        const renderer = rendererRef.current;
+        if (!renderer || !record.currentParams || !record.leadCurves) return;
+
+        dispatch({ type: 'SET_DISPLAY_CONFIG', payload: record.displayConfig });
+        renderer.setPaperSpeed(record.displayConfig.paperSpeed);
+        renderer.setGain(record.displayConfig.gain);
+        renderer.setGrid(record.displayConfig.showGrid);
+        renderer.setLabels(record.displayConfig.showLabels);
+
+        renderer.renderInit(record.currentParams, { keepCurves: true });
+        renderer.restoreCurves(record.leadCurves);
+        renderer._redrawStoredCurves(record.currentParams);
+
+        if (record.headerInfo) renderer.drawHeaderText(record.headerInfo);
+
+        dispatch({ type: 'SET_PARAMS', payload: record.currentParams });
+        dispatch({ type: 'SET_HEADER_INFO', payload: record.headerInfo });
+        dispatch({ type: 'SET_PROGRAMMATIC_ANALYSIS', payload: record.programmaticAnalysis });
+        dispatch({ type: 'SET_AI_INTERPRETATION', payload: record.aiInterpretation });
+        dispatch({ type: 'SET_AI_LEAD_DESCRIPTIONS', payload: record.aiLeadDescriptions });
+        dispatch({ type: 'SET_TOKEN_USAGE', payload: record.tokenUsage });
+
+        autoSaveIdRef.current = record.id;
+    }, []);
+
     const handleGenerateStream = useCallback(async (condition, additionalParams) => {
         dispatch({ type: 'SET_GENERATING', payload: true });
         dispatch({ type: 'CLEAR_REASONING' });
@@ -109,6 +161,9 @@ export function ECGProvider({ children }) {
         dispatch({ type: 'SET_AI_LEAD_DESCRIPTIONS', payload: null });
         dispatch({ type: 'SET_PROGRAMMATIC_ANALYSIS', payload: null });
 
+        const autoSaveId = Date.now().toString();
+        autoSaveIdRef.current = autoSaveId;
+
         const renderer = rendererRef.current;
         if (!renderer) { dispatch({ type: 'SET_GENERATING', payload: false }); return; }
 
@@ -121,6 +176,7 @@ export function ECGProvider({ children }) {
 
         let totalLeads = 0;
         let roundErrors = [];
+        let currentTokenUsage = null;
 
         try {
             roundErrors = [];
@@ -200,7 +256,8 @@ export function ECGProvider({ children }) {
                         dispatch({ type: 'APPEND_REASONING', payload: `第${info.round}轮完成 (${info.count}个工具调用)`, category: '状态' });
                     }
                     if (info.type === 'usage') {
-                        dispatch({ type: 'SET_TOKEN_USAGE', payload: { prompt: info.prompt_tokens, completion: info.completion_tokens, total: info.total_tokens } });
+                        currentTokenUsage = { prompt: info.prompt_tokens, completion: info.completion_tokens, total: info.total_tokens };
+                        dispatch({ type: 'SET_TOKEN_USAGE', payload: currentTokenUsage });
                     }
                     if (info.type === 'getStatus') {
                         if (!executorRef) return { complete: true, remaining: [], errors: [] };
@@ -249,6 +306,33 @@ export function ECGProvider({ children }) {
                 dispatch({ type: 'SET_AI_LEAD_DESCRIPTIONS', payload: executorRef.aiLeadDescriptions });
             }
             addToast('心电图生成完成', 'success');
+
+            const historyRecord = {
+                id: autoSaveIdRef.current,
+                timestamp: new Date().toISOString(),
+                condition: executorRef.headerInfo || condition || '',
+                additionalParams: additionalParams || '',
+                headerInfo: executorRef.headerInfo,
+                currentParams: executorRef.storedParams ? { ...executorRef.storedParams } : null,
+                displayConfig: { ...state.displayConfig },
+                programmaticAnalysis: executorRef.programmaticAnalysis ? { ...executorRef.programmaticAnalysis } : null,
+                aiInterpretation: executorRef.aiInterpretation,
+                aiLeadDescriptions: executorRef.aiLeadDescriptions ? { ...executorRef.aiLeadDescriptions } : null,
+                tokenUsage: currentTokenUsage ? { ...currentTokenUsage } : null,
+                leadCurves: deepCopyCurvesForHistory(renderer._leadCurves || {}),
+            };
+            const history = addHistoryRecord(historyRecord);
+            dispatch({ type: 'SET_HISTORY', payload: history });
+
+            function deepCopyCurvesForHistory(curves) {
+                const copy = {};
+                for (const [lead, points] of Object.entries(curves)) {
+                    if (Array.isArray(points)) {
+                        copy[lead] = points.map(pt => [...pt]);
+                    }
+                }
+                return copy;
+            }
         } catch (err) {
             dispatch({ type: 'SET_STATUS', payload: { text: `失败: ${err.message}`, className: 'status-error' } });
             dispatch({ type: 'APPEND_REASONING', payload: `\n## 异常: ${err.message}\n` });
@@ -267,7 +351,7 @@ export function ECGProvider({ children }) {
         catch (err) { addToast(err.message, 'error'); return { success: false, message: err.message }; }
     }, [addToast]);
 
-    const value = { state, dispatch, getRenderer, setRenderer, addToast, loadConfig, saveConfig, handleGenerateStream, handleStopGeneration, handleTestConnection, aiClientRef };
+    const value = { state, dispatch, getRenderer, setRenderer, addToast, loadConfig, saveConfig, loadHistoryInit, handleSaveToHistory, handleDeleteHistory, handleClearHistory, handleRestoreHistory, handleGenerateStream, handleStopGeneration, handleTestConnection, aiClientRef };
     return <ECGContext.Provider value={value}>{children}</ECGContext.Provider>;
 }
 
