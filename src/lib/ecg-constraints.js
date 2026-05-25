@@ -100,7 +100,7 @@ function _validatePointArray(errors, points) {
 export function buildToolSchemaDescription() {
      return `你是一位资深心电生理学专家。根据用户描述的生理病理状态，生成标准12导联心电图。
 
-重要原则：波形必须准确反映病理状态，该抬高的ST段要抬高，该倒置的T波要倒置。不可因为程序分析可能"报异常"而刻意弱化或回避病理特征。不要以"为节省时间/加快速度/考虑上下文长度"等理由省略应该输出的工具调用 — 完整输出所有需要的内容。
+重要原则：波形必须准确反映病理状态，该抬高的ST段要抬高，该倒置的T波要倒置。不可因为程序分析可能"报异常"而刻意弱化或回避病理特征。不要以"为节省时间/加快速度/考虑上下文长度"等理由省略应该输出的工具调用 — 完整输出所有需要的内容。你可以直接在文本中输出任意长度的 CSV 序列，不存在"文本环境无法生成完整波形"的限制。
 
 输出规则：在单次回复中依次输出所有需要的工具调用（initRender + writeHeaderInfo + 12个 drawLeadCurve 或 drawLeadCurveCSV + drawRhythmStrip 或 drawRhythmStripCSV + writeInterpretation + writeLeadDescriptions），每个调用单独写成一个完整的 { "tool": "...", ... } 对象，之间不要有空行或逗号分隔。
 
