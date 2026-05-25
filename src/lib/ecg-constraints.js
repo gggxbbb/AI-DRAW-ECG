@@ -137,6 +137,8 @@ export function buildECGSystemPrompt() {
 
 工作流程（工具调用路径）：首先调用 initRender 初始化画布，然后使用 writeHeaderInfo 写入标题。绘制12导联时，优先使用 drawLeadCurve（单周期，程序自动循环），每个导联一个调用。仅在复杂情况（多形态波形、不规则节律、碎裂QRS/delta波等精细波形）下使用 CSV 模式（drawAllLeadsCSV 或 drawLeadCurveCSV）。绘制完成后调用 drawRhythmStrip 绘制节律带，最后使用 writeInterpretation 和 writeLeadDescriptions 撰写解读。
 
+**所有文本必须为纯文本，禁止使用任何 markdown 格式（如 **加粗**、*斜体*、# 标题、- 列表等），直接输出纯文本内容。**
+
 工作流程（Python 路径，仅替代波形绘制）：如果你改用 runPythonCode 在 Python 中计算并绘制波形，波形绘制完成后仍需通过工具调用 writeInterpretation 和 writeLeadDescriptions 补全解读与导联描述。Python 只负责波形生成，最终的完整图像（解读文字 + 导联描述）不可省略。
 
 **Python 路径 — 两种模式**：
@@ -360,13 +362,13 @@ export function buildOpenAITools() {
             type: 'function',
             function: {
                 name: 'writeInterpretation',
-                description: '撰写完整临床解读：心律分析、间期测量、电轴判断、ST-T改变、异常发现、鉴别诊断、结论，200-500字',
+                description: '撰写完整临床解读：心律分析、间期测量、电轴判断、ST-T改变、异常发现、鉴别诊断、结论，200-500字。纯文本，禁止markdown',
                 parameters: {
                     type: 'object',
                     properties: {
                         text: {
                             type: 'string',
-                            description: '完整临床解读文本'
+                            description: '完整临床解读文本，纯文本格式禁止markdown'
                         }
                     },
                     required: ['text']
@@ -377,13 +379,13 @@ export function buildOpenAITools() {
             type: 'function',
             function: {
                 name: 'writeLeadDescriptions',
-                description: '12导联逐一描述P-QRS-T波形特征',
+                description: '12导联逐一描述P-QRS-T波形特征。纯文本，禁止markdown',
                 parameters: {
                     type: 'object',
                     properties: {
                         descriptions: {
                             type: 'object',
-                            description: '键为导联名，值为特征描述（每导联至少30字）',
+                            description: '键为导联名，值为特征描述（每导联至少30字，纯文本禁止markdown）',
                             additionalProperties: { type: 'string' }
                         }
                     },

@@ -263,6 +263,29 @@ export function ECGProvider({ children }) {
                     if (result.result.stderr) {
                         dispatch({ type: 'APPEND_REASONING', payload: `Python错误: ${result.result.stderr}`, category: '错误' });
                     }
+                    const lc = executorRef.leadCount || 0;
+                    if (lc > 0) {
+                        dispatch({ type: 'SET_STREAM_PROGRESS', payload: `${lc}/12 导联` });
+                        dispatch({ type: 'SET_PROGRESS_BAR', payload: progressBarStr(lc, 'leads') });
+                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'leads' });
+                        const curves = renderer._leadCurves || {};
+                        if (Object.keys(curves).length >= 3 && executorRef.storedParams) {
+                            const prog = ecgAnalyzer.analyze(executorRef.storedParams, curves);
+                            dispatch({ type: 'SET_PROGRAMMATIC_ANALYSIS', payload: prog });
+                            executorRef.programmaticAnalysis = prog;
+                            executorRef.rhythmConsistency = ecgAnalyzer.checkRhythmConsistency(executorRef.storedParams, curves);
+                        }
+                    }
+                    if (executorRef.rhythmDone) {
+                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'rhythm' });
+                        dispatch({ type: 'SET_PROGRESS_BAR', payload: '节律带' });
+                    }
+                    if (executorRef.headerInfo) {
+                        dispatch({ type: 'SET_HEADER_INFO', payload: executorRef.headerInfo });
+                    }
+                    if (executorRef.storedParams) {
+                        dispatch({ type: 'SET_PARAMS', payload: executorRef.storedParams });
+                    }
                 }
 
                 return result;

@@ -420,7 +420,7 @@ export class ECGRenderer {
     renderLeadCurveCSV(lead, points, params) {
         const panel = this._leadPanels.find(p => p.lead === lead);
         if (!panel) return;
-        const smoothed = catmullRomSmooth(points, 0.002);
+        const smoothed = catmullRomSmooth(points, 0.008);
         this._leadCurves[lead] = smoothed;
         this.drawPointCurveInRect(panel.x, panel.y, panel.w, panel.h, smoothed, params, this._leadDuration, true);
     }
@@ -428,7 +428,7 @@ export class ECGRenderer {
     renderLeadCurveCycle(lead, points, params) {
         const panel = this._leadPanels.find(p => p.lead === lead);
         if (!panel) return;
-        const smoothed = catmullRomSmooth(points, 0.002);
+        const smoothed = catmullRomSmooth(points, 0.008);
         this._leadCurves[lead] = smoothed;
         this.drawPointCurveInRect(panel.x, panel.y, panel.w, panel.h, smoothed, params, this._leadDuration);
     }
@@ -464,7 +464,7 @@ export class ECGRenderer {
     renderRhythmCurveCSV(points, params) {
         const rp = this._rhythmPanel;
         if (!rp || !points.length) return;
-        const smoothed = catmullRomSmooth(points, 0.002);
+        const smoothed = catmullRomSmooth(points, 0.008);
         this.drawPointCurveInRect(rp.x, rp.y, rp.w, rp.h, smoothed, params, this._rhythmDuration, true);
     }
 
