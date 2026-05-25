@@ -79,11 +79,11 @@ export class ECGAnalyzer {
 
                 const recip = [];
                 if (infMatch.length >= 2) {
-                    const latRecip = LATERAL_LEADS.filter(l => leadAnalysis[l] && leadAnalysis[l].stMv <= -0.05);
+                    const latRecip = LATERAL_LEADS.filter(l => leadAnalysis[l] && leadAnalysis[l].stMv <= -0.1);
                     if (latRecip.length > 0) recip.push(...latRecip);
                 }
                 if (antMatch.length >= 2) {
-                    const infRecip = INFERIOR_LEADS.filter(l => leadAnalysis[l] && leadAnalysis[l].stMv <= -0.05);
+                    const infRecip = INFERIOR_LEADS.filter(l => leadAnalysis[l] && leadAnalysis[l].stMv <= -0.1);
                     if (infRecip.length > 0) recip.push(...infRecip);
                 }
                 if (recip.length > 0) {
@@ -142,8 +142,9 @@ export class ECGAnalyzer {
         if (cycleLengths.length >= 2) {
             const avgCL = cycleLengths.reduce((s, v) => s + v, 0) / cycleLengths.length;
             const maxDev = Math.max(...cycleLengths.map(c => Math.abs(c - avgCL)));
-            if (maxDev > 0.05) {
-                issues.push(`导联间周期长度不一致（偏差 ${maxDev.toFixed(2)}s），应为同一周期`);
+            const relDev = avgCL > 0 ? maxDev / avgCL : 0;
+            if (relDev < 0.1 && maxDev > 0.05) {
+                issues.push(`导联间周期长度不一致（偏差 ${maxDev.toFixed(2)}s）`);
             }
         }
 
@@ -180,7 +181,8 @@ export class ECGAnalyzer {
     _analyzeLeadCurve(points) {
         if (points.length < 10) return null;
         const n = points.length;
-        const vals = points.map(p => p[1]);
+        const vals = points.map(p => typeof p[1] === 'number' && isFinite(p[1]) ? p[1] : 0);
+        const times = points.map(p => p[0]);
 
         let maxMv = -Infinity, maxIdx = 0;
         for (let i = 0; i < n; i++) {
@@ -189,17 +191,18 @@ export class ECGAnalyzer {
         const rAmp = maxMv;
         const rIdx = maxIdx;
 
-        const sampleDt = n >= 2 ? points[1][0] - points[0][0] : 0.002;
-        const qWindowPts = Math.max(3, Math.ceil(0.04 / Math.max(sampleDt, 0.0005)));
+        const sampleDt = n >= 2 ? times[1] - times[0] : 0.002;
+        const safeDt = Math.max(sampleDt, 0.0005);
+        const qWindowPts = Math.max(3, Math.ceil(0.04 / safeDt));
         let minMv = Infinity, minIdx = -1;
         const qWindow = Math.max(0, rIdx - qWindowPts);
         for (let i = qWindow; i < rIdx; i++) {
             if (vals[i] < minMv) { minMv = vals[i]; minIdx = i; }
         }
         const qDepth = minIdx >= 0 ? Math.abs(minMv) : 0;
-        const qWidthMs = minIdx > 0 && minIdx < rIdx - 1 ? (points[rIdx - 1][0] - points[minIdx][0]) * 1000 : 0;
-        const hasQWave = minIdx >= 0 && (rIdx - minIdx > 1) &&
-            (qDepth > 0.2 && qDepth > rAmp * 0.33) || (qWidthMs >= 80 && qDepth > 0.1);
+        const qWidthMs = minIdx > 0 && minIdx < rIdx - 1 ? (times[rIdx - 1] - times[minIdx]) * 1000 : 0;
+        const hasQWave = (minIdx >= 0 && (rIdx - minIdx > 1)) &&
+            ((qDepth > 0.2 && qDepth > rAmp * 0.33) || (qWidthMs >= 80 && qDepth > 0.1));
 
         const blStart = Math.max(1, Math.floor(rIdx * 0.25));
         const blEnd = Math.floor(rIdx * 0.45);
@@ -207,25 +210,29 @@ export class ECGAnalyzer {
         for (let i = blStart; i < blEnd && i < n; i++) { blSum += vals[i]; blCount++; }
         const baselineMv = blCount > 0 ? blSum / blCount : 0;
 
-        const sWindowPts = Math.max(5, Math.ceil(0.06 / Math.max(sampleDt, 0.0005)));
+        const sWindowPts = Math.max(5, Math.ceil(0.06 / safeDt));
         let sIdx = rIdx;
         let sMin = vals[rIdx];
         for (let i = rIdx + 1; i < Math.min(rIdx + sWindowPts, n); i++) {
             if (vals[i] < sMin) { sMin = vals[i]; sIdx = i; }
         }
 
-        let jIdx = sIdx + 1;
-        for (let i = sIdx + 1; i < n - 4; i++) {
-            let flatRun = true;
-            for (let j = 0; j < 3; j++) {
-                if (Math.abs(vals[i + j + 1] - vals[i + j]) >= 0.03) { flatRun = false; break; }
+        let jIdx = -1;
+        for (let i = sIdx + 1; i < Math.min(sIdx + sWindowPts * 2, n); i++) {
+            if (vals[i] >= baselineMv) { jIdx = i; break; }
+        }
+        if (jIdx < 0) {
+            for (let i = sIdx + 1; i < Math.min(sIdx + sWindowPts * 2, n); i++) {
+                if (Math.abs(vals[i] - baselineMv) <= 0.02) { jIdx = i; break; }
             }
-            if (flatRun) { jIdx = i; break; }
+        }
+        if (jIdx < 0) {
+            jIdx = Math.min(sIdx + Math.ceil(0.04 / safeDt), n - 1);
         }
 
         let tPeakIdx = -1;
         let tMax = -Infinity;
-        const tStart = Math.min(jIdx + 3, n - 1);
+        const tStart = Math.min(jIdx + Math.ceil(0.08 / safeDt), n - 1);
         for (let i = tStart; i < n; i++) {
             if (vals[i] > tMax && vals[i] > baselineMv) { tMax = vals[i]; tPeakIdx = i; }
         }
@@ -239,9 +246,10 @@ export class ECGAnalyzer {
         const tMv = tPeakIdx >= 0 ? vals[tPeakIdx] : baselineMv;
         const tInverted = (tMv - baselineMv) < -0.1;
 
-        const stEnd = tPeakIdx > jIdx ? Math.floor(jIdx + (tPeakIdx - jIdx) * 0.35) : Math.min(jIdx + 2, n - 1);
+        const stStart = Math.min(jIdx + Math.ceil(0.04 / safeDt), n - 1);
+        const stEnd = Math.min(jIdx + Math.ceil(0.08 / safeDt), n - 1);
         let stSum = 0, stCount = 0;
-        for (let i = jIdx; i <= stEnd && i < n; i++) { stSum += vals[i] - baselineMv; stCount++; }
+        for (let i = stStart; i <= stEnd; i++) { stSum += vals[i] - baselineMv; stCount++; }
         const stMv = stCount > 0 ? stSum / stCount : 0;
 
         return { rAmp, stMv, baselineMv, hasQWave, tInverted, tAvg: tMv - baselineMv };

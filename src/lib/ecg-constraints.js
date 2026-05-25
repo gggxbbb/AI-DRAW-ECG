@@ -133,9 +133,9 @@ export function buildECGSystemPrompt() {
 
 重要原则：波形必须准确反映病理状态，该抬高的ST段要抬高，该倒置的T波要倒置。不可因为程序分析可能"报异常"而刻意弱化或回避病理特征。不要以"为节省时间/加快速度/考虑上下文长度"等理由省略应该输出的工具调用 — 完整输出所有需要的内容。你可以直接在文本中输出任意长度的 CSV 序列，不存在"文本环境无法生成完整波形"的限制。
 
-如果你已经在 Python 环境中计算出了完整的 12 导联波形数据，务必将其绘制出来。不要因为"绘制过程会太慢/迭代次数太多"而中途放弃已生成的数据，去尝试用其他方式重新生成。已算好的数据就是最好的数据，直接用 drawAllLeadsCSV 一次性全部绘制。
+如果你已经在 Python 环境中计算出了完整的 12 导联波形数据，务必将其绘制出来。不要因为"绘制过程会太慢/迭代次数太多"而中途放弃已生成的数据，去尝试用其他方式重新生成。此时可使用 drawAllLeadsCSV 一次性全部绘制。但一般情况下，请优先使用最简洁的 drawLeadCurve（单周期模式），无需为了显示精细波形而刻意使用 CSV。
 
-工作流程：首先调用 initRender 初始化画布，然后使用 writeHeaderInfo 写入标题。绘制12导联时，推荐使用 drawAllLeadsCSV 一次性提交全部12导联的 CSV 数据（高效、一次调用完成）。也可逐导联使用 drawLeadCurve 或 drawLeadCurveCSV。绘制完成后调用 drawRhythmStrip 或 drawRhythmStripCSV 绘制节律带，最后使用 writeInterpretation 和 writeLeadDescriptions 撰写解读。
+工作流程：首先调用 initRender 初始化画布，然后使用 writeHeaderInfo 写入标题。绘制12导联时，优先使用 drawLeadCurve（单周期，程序自动循环），每个导联一个调用。仅在复杂情况（多形态波形、不规则节律、碎裂QRS/delta波等精细波形）下使用 CSV 模式（drawAllLeadsCSV 或 drawLeadCurveCSV）。绘制完成后调用 drawRhythmStrip 绘制节律带，最后使用 writeInterpretation 和 writeLeadDescriptions 撰写解读。
 
 你可以使用 runPythonCode 在浏览器 Python 环境中运行计算（含 numpy），stdout 结果会立即返回给你，可用于计算复杂波形、批量生成 CSV。
 
@@ -172,12 +172,13 @@ export function buildECGSystemPrompt() {
 - 每导联 points[0] 的 mV 值为该导联的等电位基线（通常接近 0）
 - 所有波形偏移以此基线为参考
 
-绘制引擎选择：
-- drawAllLeadsCSV：一次性绘制全部12导联（推荐），参数格式：{ "leads": { "I":"csv...", "II":"csv...", "III":"csv...", "aVR":"csv...", "aVL":"csv...", "aVF":"csv...", "V1":"csv...", ... "V6":"csv..." } }。leads 是一个对象（不是数组），必须包含全部12个导联的键名。
-- drawLeadCurve：常规情况，单周期+自动循环，数据通过程序校验
-- drawLeadCurveCSV：逐导联精细控制 — 精细波形(>30点)、多形态波形、复杂病变(碎裂QRS/delta波等)、不规则节律、校验重试困难后
-- drawRhythmStrip：复用已绘制的导联数据循环填充10s
-- drawRhythmStripCSV：CSV直接渲染10s节律带，适合不规则节律`;
+绘制引擎选择（按优先级排列）：
+- drawLeadCurve：常规心电图首选！单周期+自动循环，数据通过程序校验。适用于窦性、单一形态早搏、典型阻滞等绝大多数情况。每个导联单独调用。
+- drawAllLeadsCSV：备用。一次性绘制12导联 CSV。仅在 runPythonCode 已算出全面板数据、且曲线复杂度不适合单周期表达时使用。
+- drawLeadCurveCSV：逐导联精细控制。仅复杂病变使用 — 碎裂QRS、delta波、epsilon波、多形态室早、房颤f波、尖端扭转等。
+- drawRhythmStrip：复用已绘制的导联数据，自动循环10s节律带。首选。
+- drawRhythmStripCSV：仅在不规则节律需全程展示10s原始波形时使用。
+- runPythonCode：辅助计算工具，按需使用。`;
 }
 
 export function buildOpenAITools() {
@@ -238,7 +239,7 @@ export function buildOpenAITools() {
             type: 'function',
             function: {
                 name: 'drawLeadCurve',
-                description: '单周期模式：提供一个心搏周期的数据点，系统自动循环填满导联面板。数据会通过程序校验。',
+                description: '单周期模式（首选！）：提供一个心搏周期的数据点，系统自动循环填满导联面板。数据会通过程序校验。适用于绝大多数情况。',
                 parameters: {
                     type: 'object',
                     properties: {
@@ -280,7 +281,7 @@ export function buildOpenAITools() {
             type: 'function',
             function: {
                 name: 'drawAllLeadsCSV',
-                description: '一次性绘制全部12导联（推荐）。参数格式：{ "leads": { "I":"csv...", "II":"csv...", "III":"csv...", "aVR":"csv...", "aVL":"csv...", "aVF":"csv...", "V1":"csv...", "V2":"csv...", "V3":"csv...", "V4":"csv...", "V5":"csv...", "V6":"csv..." } }。leads 对象必须包含全部 12 个导联的键。一次调用完成全部绘制。',
+                description: '一次性绘制全部12导联（备用）。仅在 runPythonCode 已算出全面板数据、或曲线复杂度不适合单周期表达时使用。参数格式：{ "leads": { "I":"csv...", "II":"csv...", ... } }。leads 对象必须包含全部 12 个导联。',
                 parameters: {
                     type: 'object',
                     properties: {
