@@ -677,15 +677,25 @@ html, body {
     .main-content { flex-direction: column; }
     .control-panel {
         order: 2;
+        flex: 3;
         width: 100%; min-width: auto;
-        max-height: 40vh;
+        max-height: none;
         border-right: none;
         border-bottom: 1px solid var(--border);
         padding-bottom: calc(12px + env(safe-area-inset-bottom));
     }
     .ecg-display {
         order: 1;
-        min-height: 55vh;
+        flex: 2;
+        min-height: 0;
+        background: #f5f5e8;
+    }
+    .canvas-container {
+        background: #f5f5e8;
+    }
+    .ecg-toolbar {
+        background: #f5f5e8;
+        border-bottom-color: #e0d8d0;
     }
     .status-text {
         max-width: 40vw;
@@ -694,16 +704,19 @@ html, body {
 
 @media (max-width: 480px) {
     .ecg-toolbar {
-        padding: 4px 6px;
+        padding: 2px 6px;
         gap: 2px;
+        min-height: 28px;
+        border-bottom: none;
     }
     .btn-sm {
-        padding: 3px 6px;
-        min-width: 36px;
+        padding: 2px 6px;
+        min-width: 32px;
+        font-size: 0.7rem;
     }
     .status-text {
         max-width: 34vw;
-        font-size: 0.7rem;
+        font-size: 0.68rem;
     }
 }
 

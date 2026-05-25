@@ -5,9 +5,9 @@ import { buildHistoryRecord } from '../lib/ecg-history';
 export default function HistoryPanel() {
     const { state, handleRestoreHistory, handleDeleteHistory, handleClearHistory, handleSaveToHistory, getRenderer } = useECG();
     const { history } = state;
-    const [isOpen, setIsOpen] = useState(true);
+    const [isOpen, setIsOpen] = useState(false);
 
-    if (history.length === 0 && !isOpen) return null;
+    if (history.length === 0) return null;
 
     const sectionClass = `panel-section collapsible${isOpen ? ' open' : ''}`;
 
@@ -48,6 +48,7 @@ export default function HistoryPanel() {
     return (
         <section className={sectionClass}>
             <h2 className="section-title" onClick={() => setIsOpen(!isOpen)}>
+                <span className="collapse-arrow">&#9654;</span>
                 历史记录
                 <span className="history-badge">{history.length}</span>
             </h2>
