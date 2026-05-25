@@ -79,12 +79,17 @@ class PyodideRuntime {
 
         const toJsArr = (proxy) => {
             if (!proxy) return [];
-            try { return Array.from(proxy.toJs()); } catch (e) { return []; }
+            try { return proxy.toJs(); } catch (e) { return []; }
         };
 
         const toJsObj = (proxy) => {
             if (!proxy) return {};
-            try { return Object.fromEntries(proxy.toJs()); } catch (e) { return {}; }
+            try { return proxy.toJs(); } catch (e) { return {}; }
+        };
+
+        const normalizePoints = (pts) => {
+            if (!pts || !pts.length || Array.isArray(pts[0])) return pts;
+            return pts.map(p => [p[0], p[1]]);
         };
 
         const VALID_LEADS = ['I','II','III','aVR','aVL','aVF','V1','V2','V3','V4','V5','V6'];
@@ -144,7 +149,7 @@ class PyodideRuntime {
                 pyPrint(msg); return msg;
             }
             let pts;
-            try { pts = toJsArr(pointsProxy); } catch (e) {
+            try { pts = normalizePoints(toJsArr(pointsProxy)); } catch (e) {
                 const msg = `[ecg_draw_lead] ERROR: ${leadStr} 数据解析失败 - ${e.message}`;
                 pyPrint(msg); return msg;
             }
@@ -170,38 +175,42 @@ class PyodideRuntime {
                 const msg = '[ecg_draw_all] ERROR: 请先调用 ecg_init';
                 pyPrint(msg); return msg;
             }
-            let leadsObj;
-            try { leadsObj = toJsObj(leadsProxy); } catch (e) {
-                const msg = `[ecg_draw_all] ERROR: leads 数据解析失败 - ${e.message}`;
-                pyPrint(msg); return msg;
-            }
             const drawn = [];
             const errors = [];
-            for (const [lead, pointsProxy] of Object.entries(leadsObj)) {
-                if (!lead || lead === 'length' || lead === 'constructor') continue;
-                if (!VALID_LEADS.includes(lead)) {
-                    errors.push(`无效导联: '${lead}'`);
-                    continue;
+            try {
+                for (const lead of leadsProxy) {
+                    const leadStr = String(lead);
+                    if (!leadStr || !VALID_LEADS.includes(leadStr)) {
+                        errors.push(`无效导联: '${leadStr}'`);
+                        continue;
+                    }
+                    const pointsProxy = leadsProxy.get(lead);
+                    if (!pointsProxy) {
+                        errors.push(`${leadStr}: 未获取到数据`);
+                        continue;
+                    }
+                    let pts;
+                    try {
+                        pts = normalizePoints(toJsArr(pointsProxy));
+                    } catch (e) {
+                        errors.push(`${leadStr}: 数据解析失败`);
+                        continue;
+                    }
+                    if (!pts || pts.length < 4) {
+                        errors.push(`${leadStr}: 数据点不足 (${pts ? pts.length : 0})`);
+                        continue;
+                    }
+                    rend.renderLeadCurveCSV(leadStr, pts, exec.storedParams);
+                    if (!exec.leadNames.includes(leadStr)) {
+                        exec.leadCount++;
+                        exec.leadNames.push(leadStr);
+                    }
+                    drawn.push(leadStr);
                 }
-                let pts;
-                try {
-                    pts = Array.isArray(pointsProxy) && typeof pointsProxy[0] === 'number'
-                        ? [pointsProxy]
-                        : toJsArr(pointsProxy);
-                } catch (e) {
-                    errors.push(`${lead}: 数据解析失败`);
-                    continue;
-                }
-                if (!pts || pts.length < 4) {
-                    errors.push(`${lead}: 数据点不足 (${pts ? pts.length : 0})`);
-                    continue;
-                }
-                rend.renderLeadCurveCSV(lead, pts, exec.storedParams);
-                if (!exec.leadNames.includes(lead)) {
-                    exec.leadCount++;
-                    exec.leadNames.push(lead);
-                }
-                drawn.push(lead);
+            } catch (e) {
+                const msg = `[ecg_draw_all] ERROR: 遍历失败 - ${e.message}`;
+                pyPrint(msg);
+                return msg;
             }
             const msg = `[ecg_draw_all] 完成 ${drawn.length}/12 导联: ${drawn.join(', ')}` +
                 (errors.length ? ` | 错误: ${errors.join('; ')}` : '');

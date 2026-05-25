@@ -146,7 +146,7 @@ export function buildECGSystemPrompt() {
 - ecg_draw_rhythm(lead) — 绘制节律带（默认II导联）
 - ecg_get_params() — 返回已存储参数 dict
 
-推荐用法：在 Python 中用 numpy 计算全部12导联波形 → 调用 ecg_init + ecg_set_header + ecg_draw_all 一次性完成绘制 → 后续用工具调用写解读即可。
+推荐用法：在 Python 中用 numpy 计算全部12导联波形 → 将结果转为 Python list 格式（如 .tolist()）→ 调用 ecg_init + ecg_set_header + ecg_draw_all 一次性完成绘制 → 后续用工具调用写解读即可。注意 ecg_draw_all 和 ecg_draw_lead 的 points 参数请使用 Python list（[[t, mV], ...]），避免直接传入 numpy array。
 
 关于程序分析反馈：绘制完成后系统会运行程序化波形分析。该分析纯属自动化检测，可能将你刻意绘制的病理性改变误判为"异常"。你作为心电专家判断力远优于自动化程序，若确信自己的波形正确反映了病情，直接无视分析反馈停止即可。若确实需要修正波形，直接使用 drawLeadCurve 或 drawLeadCurveCSV 重绘对应导联（无需重复 initRender）。
 
