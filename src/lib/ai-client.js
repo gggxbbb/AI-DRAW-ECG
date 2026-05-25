@@ -7,7 +7,7 @@ export class AIClient {
         this.token = '';
         this.model = 'gpt-4o';
         this.temperature = 0.3;
-        this.maxTokens = 8192;
+        this.maxTokens = 32768;
         this._abortController = null;
     }
 
@@ -60,6 +60,7 @@ export class AIClient {
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let fullContent = '';
         let toolIndex = 0;
         let usage = null;
 
@@ -85,6 +86,7 @@ export class AIClient {
                     if (!content) continue;
                     if (onReasoning) onReasoning(content, 'content');
                     buffer += content;
+                    fullContent += content;
 
                     let braceDepth = 0, inString = false, esc = false, objStart = -1, found = 0;
                     for (let i = 0; i < buffer.length; i++) {
@@ -113,7 +115,7 @@ export class AIClient {
                 } catch (e) {}
             }
         }
-        return { toolIndex, usage };
+        return { toolIndex, usage, content: fullContent.trim() };
     }
 
     async generateMultiRound(condition, additionalParams, onReasoning, onToolCall, onProgress, reasoningEffort) {
@@ -134,6 +136,7 @@ export class AIClient {
 
             let totalTools = 0;
             const roundTools = [];
+            let roundContent = '';
             let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
             try {
                 const result = await this.streamCall(messages, onReasoning, (tool, idx) => {
@@ -141,6 +144,7 @@ export class AIClient {
                     roundTools.push(tool);
                     onToolCall(tool, idx, round);
                 }, reasoningEffort);
+                roundContent = result.content || '';
                 if (result.usage) {
                     totalUsage.prompt_tokens += result.usage.prompt_tokens || 0;
                     totalUsage.completion_tokens += result.usage.completion_tokens || 0;
@@ -195,7 +199,10 @@ export class AIClient {
                     if (analysisRound && status && status.complete) {
                         return { success: true, rounds: round };
                     }
-                    messages.push({ role: 'user', content: `上一轮你只输出了推理文本，没有任何工具调用JSON。你必须直接输出JSON对象序列，每个对象独占多行：\n\n{ "tool": "initRender", "paperSpeed": 25, "gain": 10, "rhythmType": "sinus", "params": { ... } }\n{ "tool": "drawLeadCurveCSV", "lead": "I", "csv": "0.00,0.00\\n0.02,0.02\\n..." }\n...\n\n不要用Markdown代码块包裹。不要输出前言、解释、思考过程。直接以 { 开头。立即开始输出第一个工具调用。` });
+                    if (roundContent) {
+                        messages.push({ role: 'assistant', content: roundContent });
+                    }
+                    messages.push({ role: 'user', content: `以上是上轮你的输出文本（未识别到有效工具调用JSON）。请**直接**输出JSON工具调用对象，跳过分析思考，不要解释。立即以 { 开头：\n\n{ "tool": "initRender", "paperSpeed": 25, "gain": 10, "rhythmType": "sinus", "params": { ... } }\n{ "tool": "drawLeadCurveCSV", "lead": "I", "csv": "0.00,0.00\\n0.02,0.02\\n..." }\n...` });
                 } else {
                     messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
                     const alreadyDone = remainingTasks.length > 0
