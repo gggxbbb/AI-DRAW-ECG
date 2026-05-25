@@ -11,7 +11,10 @@ import Toast from './components/Toast';
 import './index.css';
 
 export default function App() {
-    const { loadConfig, loadHistoryInit } = useECG();
+    const { loadConfig, loadHistoryInit, state } = useECG();
+    const pyStatus = state.pyodideStatus;
+    const pyStatusLabel = { idle: '', loading: 'Python 加载中...', ready: 'Python 就绪', error: 'Python 加载失败' }[pyStatus];
+    const pyStatusClass = { idle: '', loading: 'status-loading', ready: 'status-success', error: 'status-error' }[pyStatus];
 
     useEffect(() => {
         loadConfig();
@@ -40,6 +43,17 @@ export default function App() {
                 </div>
                 <span className="separator-dot"></span>
                 <p className="subtitle">AI 驱动的 12 导联心电图生成器</p>
+                {pyStatus !== 'idle' && (
+                    <>
+                        <span className="separator-dot"></span>
+                        <span className={`pyodide-badge ${pyStatusClass}`}>
+                            {pyStatus === 'loading' && <span className="py-spinner"></span>}
+                            {pyStatus === 'ready' && <span className="py-check">&#x2713;</span>}
+                            {pyStatus === 'error' && <span className="py-error-icon">&#x2717;</span>}
+                            {pyStatusLabel}
+                        </span>
+                    </>
+                )}
             </header>
 
             <main className="main-content">

@@ -1,9 +1,10 @@
-import { createContext, useContext, useReducer, useRef, useCallback } from 'react';
+import { createContext, useContext, useReducer, useRef, useCallback, useEffect } from 'react';
 import { ECGRenderer } from '../lib/ecg-renderer';
 import { AIClient } from '../lib/ai-client';
 import { ToolExecutor } from '../lib/tool-executor';
 import { ecgAnalyzer } from '../lib/ecg-analyzer';
 import { loadHistory, addHistoryRecord, deleteHistoryRecord, clearHistory } from '../lib/ecg-history';
+import { pyodideRuntime } from '../lib/pyodide-runtime';
 
 const ECGContext = createContext(null);
 
@@ -26,6 +27,7 @@ const initialState = {
     tokenUsage: null,
     toasts: [],
     history: [],
+    pyodideStatus: 'idle',
 };
 
 function reducer(state, action) {
@@ -58,6 +60,7 @@ function reducer(state, action) {
         case 'SET_HISTORY': return { ...state, history: action.payload };
         case 'DELETE_FROM_HISTORY': return { ...state, history: state.history.filter(r => r.id !== action.payload) };
         case 'CLEAR_HISTORY': return { ...state, history: [] };
+        case 'SET_PYODIDE_STATUS': return { ...state, pyodideStatus: action.payload };
         default: return state;
     }
 }
@@ -77,6 +80,15 @@ export function ECGProvider({ children }) {
 
     const getRenderer = useCallback(() => rendererRef.current, []);
     const setRenderer = useCallback((r) => { rendererRef.current = r; }, []);
+
+    useEffect(() => {
+        dispatch({ type: 'SET_PYODIDE_STATUS', payload: pyodideRuntime.status });
+        const unsub = pyodideRuntime.onChange((status) => {
+            dispatch({ type: 'SET_PYODIDE_STATUS', payload: status });
+        });
+        setTimeout(() => pyodideRuntime.preload(), 3000);
+        return unsub;
+    }, []);
 
     const addToast = useCallback((message, type = 'info') => {
         const icons = { success: '\u2713', error: '\u2717', warning: '!', info: 'i' };
@@ -177,12 +189,153 @@ export function ECGProvider({ children }) {
         let totalLeads = 0;
         let roundErrors = [];
         let currentTokenUsage = null;
-        let currentRound = 0;
+        let currentIteration = 0;
         let correctionLog = [];
 
         try {
             roundErrors = [];
-            const genResult = await aiClientRef.current.generateMultiRound(
+
+            const executeTool = async (toolCall) => {
+                const toolLabel = ['drawLeadCurve', 'drawLeadCurveCSV', 'drawRhythmStripCSV', 'drawAllLeadsCSV'].includes(toolCall.tool)
+                    ? `${toolCall.tool.replace('drawLeadCurve', '导联').replace('CSV', '(CSV)').replace('drawRhythmStripCSV', '节律带(CSV)')}${toolCall.lead ? ' → ' + toolCall.lead : ''}`
+                    : toolCall.tool;
+                dispatch({ type: 'APPEND_REASONING', payload: toolLabel, category: '工具' });
+
+                const result = await executorRef.executeSingle(toolCall, (lead, count) => {
+                    totalLeads = count;
+                    dispatch({ type: 'SET_STREAM_PROGRESS', payload: `${lead} (${count}/12)` });
+                    dispatch({ type: 'SET_PROGRESS_BAR', payload: progressBarStr(count, 'leads') });
+                    dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'leads' });
+                });
+
+                if (!result.success) {
+                    dispatch({ type: 'APPEND_REASONING', payload: result.errors.join('; '), category: '错误' });
+                    roundErrors.push(...result.errors);
+                    return result;
+                }
+
+                if (result.warned) {
+                    dispatch({ type: 'APPEND_REASONING', payload: `${result.lead} 验证警告: ${result.warning}（AI 执意绘制）`, category: '警告' });
+                }
+                if (result.action === 'init') {
+                    dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'init' });
+                    dispatch({ type: 'SET_PROGRESS_BAR', payload: '初始化完成' });
+                    dispatch({ type: 'SET_PARAMS', payload: executorRef.storedParams });
+                }
+                if (result.action === 'writeHeaderInfo') {
+                    dispatch({ type: 'SET_HEADER_INFO', payload: executorRef.headerInfo });
+                }
+                if (result.action === 'drawLeadCurve' || result.action === 'drawLeadCurveCSV' || result.action === 'drawAllLeadsCSV') {
+                    const curves = renderer._leadCurves || {};
+                    if (Object.keys(curves).length >= 3 && executorRef.storedParams) {
+                        const prog = ecgAnalyzer.analyze(executorRef.storedParams, curves);
+                        dispatch({ type: 'SET_PROGRAMMATIC_ANALYSIS', payload: prog });
+                        executorRef.programmaticAnalysis = prog;
+                        executorRef.rhythmConsistency = ecgAnalyzer.checkRhythmConsistency(executorRef.storedParams, curves);
+                    }
+                }
+                if (result.action === 'drawRhythmStrip' || result.action === 'drawRhythmStripCSV') {
+                    dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'rhythm' });
+                    dispatch({ type: 'SET_PROGRESS_BAR', payload: '节律带' });
+                    const curves = renderer._leadCurves || {};
+                    const prog = ecgAnalyzer.analyze(executorRef.storedParams, curves);
+                    dispatch({ type: 'SET_PROGRAMMATIC_ANALYSIS', payload: prog });
+                    executorRef.programmaticAnalysis = prog;
+                    executorRef.rhythmConsistency = ecgAnalyzer.checkRhythmConsistency(executorRef.storedParams, curves);
+                    dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'analysis' });
+                    dispatch({ type: 'SET_PROGRESS_BAR', payload: prog.conclusion === '未见明显异常' ? '分析：未见异常' : '分析：' + prog.conclusion });
+                }
+                if (result.action === 'writeInterpretation') {
+                    dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'interp' });
+                    dispatch({ type: 'SET_PROGRESS_BAR', payload: 'AI 解读' });
+                    dispatch({ type: 'SET_AI_INTERPRETATION', payload: executorRef.aiInterpretation });
+                }
+                if (result.complete || (result.action === 'drawRhythmStrip' && executorRef.leadCount >= 12)) {
+                    dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'desc' });
+                    dispatch({ type: 'SET_AI_LEAD_DESCRIPTIONS', payload: executorRef.aiLeadDescriptions || null });
+                }
+                if (result.action === 'runPythonCode' && result.result) {
+                    if (result.result.stdout) {
+                        dispatch({ type: 'APPEND_REASONING', payload: `\n${result.result.stdout}`, category: '输出' });
+                    }
+                    if (result.result.stderr) {
+                        dispatch({ type: 'APPEND_REASONING', payload: `Python错误: ${result.result.stderr}`, category: '错误' });
+                    }
+                }
+
+                return result;
+            };
+
+            const onProgress = (info) => {
+                if (info.type === 'iteration') {
+                    roundErrors = [];
+                    currentIteration = info.iteration;
+                    const rwNote = executorRef.redrawRound ? ' [重绘]' : '';
+                    dispatch({ type: 'SET_STATUS', payload: { text: `第${info.iteration}轮生成中...${rwNote}`, className: 'status-loading' } });
+                }
+                if (info.type === 'toolStart') {
+                    dispatch({ type: 'SET_STATUS', payload: { text: `第${info.iteration}轮 · ${info.toolCall.tool}`, className: 'status-loading' } });
+                }
+                if (info.type === 'iterationDone') {
+                    dispatch({ type: 'APPEND_REASONING', payload: `第${info.iteration}轮完成 (${info.toolCount}个工具调用)`, category: '状态' });
+                }
+                if (info.type === 'usage') {
+                    currentTokenUsage = { prompt: info.prompt_tokens, completion: info.completion_tokens, total: info.total_tokens };
+                    dispatch({ type: 'SET_TOKEN_USAGE', payload: currentTokenUsage });
+                }
+                if (info.type === 'getStatus') {
+                    if (!executorRef) return { complete: true, remaining: [], errors: [] };
+                    const analysis = executorRef.programmaticAnalysis;
+                    const rhythm = executorRef.rhythmConsistency;
+                    let analysisFeedback = null;
+                    if (analysis && rhythm && executorRef.leadCount >= 12) {
+                        const parts = [];
+                        if (analysis.conclusion !== '未见明显异常') {
+                            parts.push(`测量指标异常：${analysis.conclusion}`);
+                            const abns = analysis.findings.filter(f => f.severity === 'abnormal' || f.severity === 'critical');
+                            if (abns.length) parts.push(`发现：${abns.map(f => f.text).join('；')}`);
+                        }
+                        if (!rhythm.isConsistent) {
+                            parts.push(`节律一致性检查失败：${rhythm.issues.join('；')}`);
+                        }
+                        if (parts.length) analysisFeedback = parts.join('\n');
+                    }
+                    let pythonOutput = null;
+                    if (executorRef.lastPythonOutput) {
+                        if (executorRef.lastPythonOutput.stdout) {
+                            pythonOutput = executorRef.lastPythonOutput.stdout;
+                        }
+                        if (executorRef.lastPythonOutput.stderr) {
+                            pythonOutput = (pythonOutput || '') + '\n[Python stderr]\n' + executorRef.lastPythonOutput.stderr;
+                        }
+                    }
+                    if (analysisFeedback && executorRef.isComplete && executorRef.programmaticAnalysis) {
+                        const abns = executorRef.programmaticAnalysis.findings.filter(
+                            f => f.severity === 'abnormal' || f.severity === 'critical'
+                        );
+                        correctionLog.push({
+                            round: currentIteration,
+                            conclusion: executorRef.programmaticAnalysis.conclusion,
+                            findings: abns.map(f => f.text),
+                            rhythmIssues: rhythm?.issues || [],
+                        });
+                    }
+                    return {
+                        complete: executorRef.isComplete,
+                        remaining: executorRef.getRemainingTasks(),
+                        errors: roundErrors,
+                        analysisFeedback,
+                        pythonOutput,
+                        context: {
+                            params: executorRef.storedParams,
+                            leadsDone: [...executorRef.leadNames],
+                            headerInfo: executorRef.headerInfo,
+                        },
+                    };
+                }
+            };
+
+            const genResult = await aiClientRef.current.agentLoop(
                 condition, additionalParams,
                 (text, type) => {
                     if (type === 'reasoning') {
@@ -191,120 +344,8 @@ export function ECGProvider({ children }) {
                         dispatch({ type: 'APPEND_REASONING', payload: text, category: '输出' });
                     }
                 },
-                (toolCall, idx, round) => {
-                    dispatch({ type: 'SET_STATUS', payload: { text: `第${round}轮 · 工具#${idx + 1}`, className: 'status-loading' } });
-                    const toolLabel = ['drawLeadCurve', 'drawLeadCurveCSV', 'drawRhythmStripCSV'].includes(toolCall.tool)
-                        ? `${toolCall.tool.replace('drawLeadCurve', '导联').replace('CSV', '(CSV)').replace('drawRhythmStripCSV', '节律带(CSV)')}${toolCall.lead ? ' → ' + toolCall.lead : ''}`
-                        : toolCall.tool;
-                    dispatch({ type: 'APPEND_REASONING', payload: toolLabel, category: '工具' });
-                    const result = executorRef.executeSingle(toolCall, (lead, count) => {
-                        totalLeads = count;
-                        dispatch({ type: 'SET_STREAM_PROGRESS', payload: `${lead} (${count}/12)` });
-                        dispatch({ type: 'SET_PROGRESS_BAR', payload: progressBarStr(count, 'leads') });
-                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'leads' });
-                    });
-                    if (!result.success) {
-                        dispatch({ type: 'APPEND_REASONING', payload: result.errors.join('; '), category: '错误' });
-                        roundErrors.push(...result.errors);
-                        return;
-                    }
-                    if (result.warned) {
-                        dispatch({ type: 'APPEND_REASONING', payload: `${result.lead} 验证警告: ${result.warning}（AI 执意绘制）`, category: '警告' });
-                    }
-                    if (result.action === 'init') {
-                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'init' });
-                        dispatch({ type: 'SET_PROGRESS_BAR', payload: '初始化完成' });
-                        dispatch({ type: 'SET_PARAMS', payload: executorRef.storedParams });
-                    }
-                    if (result.action === 'writeHeaderInfo') {
-                        dispatch({ type: 'SET_HEADER_INFO', payload: executorRef.headerInfo });
-                    }
-                    if (result.action === 'drawLeadCurve' || result.action === 'drawLeadCurveCSV') {
-                        const curves = renderer._leadCurves || {};
-                        if (Object.keys(curves).length >= 3 && executorRef.storedParams) {
-                            const prog = ecgAnalyzer.analyze(executorRef.storedParams, curves);
-                            dispatch({ type: 'SET_PROGRAMMATIC_ANALYSIS', payload: prog });
-                            executorRef.programmaticAnalysis = prog;
-                            executorRef.rhythmConsistency = ecgAnalyzer.checkRhythmConsistency(executorRef.storedParams, curves);
-                        }
-                    }
-                    if (result.action === 'drawRhythmStrip' || result.action === 'drawRhythmStripCSV') {
-                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'rhythm' });
-                        dispatch({ type: 'SET_PROGRESS_BAR', payload: '节律带' });
-                        const curves = renderer._leadCurves || {};
-                        const prog = ecgAnalyzer.analyze(executorRef.storedParams, curves);
-                        dispatch({ type: 'SET_PROGRAMMATIC_ANALYSIS', payload: prog });
-                        executorRef.programmaticAnalysis = prog;
-                        executorRef.rhythmConsistency = ecgAnalyzer.checkRhythmConsistency(executorRef.storedParams, curves);
-                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'analysis' });
-                        dispatch({ type: 'SET_PROGRESS_BAR', payload: prog.conclusion === '未见明显异常' ? '分析：未见异常' : '分析：' + prog.conclusion });
-                    }
-                    if (result.action === 'writeInterpretation') {
-                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'interp' });
-                        dispatch({ type: 'SET_PROGRESS_BAR', payload: 'AI 解读' });
-                        dispatch({ type: 'SET_AI_INTERPRETATION', payload: executorRef.aiInterpretation });
-                    }
-                    if (result.complete || (result.action === 'drawRhythmStrip' && executorRef.leadCount >= 12)) {
-                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'desc' });
-                        dispatch({ type: 'SET_AI_LEAD_DESCRIPTIONS', payload: executorRef.aiLeadDescriptions || null });
-                    }
-                    lastAction = result.action;
-                },
-                (info) => {
-                    if (info.type === 'round') {
-                        roundErrors = [];
-                        currentRound = info.round;
-                        const rwNote = executorRef.redrawRound ? ' [重绘]' : '';
-                        dispatch({ type: 'SET_STATUS', payload: { text: `第${info.round}轮生成中...${rwNote}`, className: 'status-loading' } });
-                    }
-                    if (info.type === 'roundDone') {
-                        dispatch({ type: 'APPEND_REASONING', payload: `第${info.round}轮完成 (${info.count}个工具调用)`, category: '状态' });
-                    }
-                    if (info.type === 'usage') {
-                        currentTokenUsage = { prompt: info.prompt_tokens, completion: info.completion_tokens, total: info.total_tokens };
-                        dispatch({ type: 'SET_TOKEN_USAGE', payload: currentTokenUsage });
-                    }
-                    if (info.type === 'getStatus') {
-                        if (!executorRef) return { complete: true, remaining: [], errors: [] };
-                        const analysis = executorRef.programmaticAnalysis;
-                        const rhythm = executorRef.rhythmConsistency;
-                        let analysisFeedback = null;
-                        if (analysis && rhythm && executorRef.leadCount >= 12) {
-                            const parts = [];
-                            if (analysis.conclusion !== '未见明显异常') {
-                                parts.push(`测量指标异常：${analysis.conclusion}`);
-                                const abns = analysis.findings.filter(f => f.severity === 'abnormal' || f.severity === 'critical');
-                                if (abns.length) parts.push(`发现：${abns.map(f => f.text).join('；')}`);
-                            }
-                            if (!rhythm.isConsistent) {
-                                parts.push(`节律一致性检查失败：${rhythm.issues.join('；')}`);
-                            }
-                            if (parts.length) analysisFeedback = parts.join('\n');
-                        }
-                        if (analysisFeedback && executorRef.isComplete && executorRef.programmaticAnalysis) {
-                            const abns = executorRef.programmaticAnalysis.findings.filter(
-                                f => f.severity === 'abnormal' || f.severity === 'critical'
-                            );
-                            correctionLog.push({
-                                round: currentRound,
-                                conclusion: executorRef.programmaticAnalysis.conclusion,
-                                findings: abns.map(f => f.text),
-                                rhythmIssues: rhythm?.issues || [],
-                            });
-                        }
-                        return {
-                            complete: executorRef.isComplete,
-                            remaining: executorRef.getRemainingTasks(),
-                            errors: roundErrors,
-                            analysisFeedback,
-                            context: {
-                                params: executorRef.storedParams,
-                                leadsDone: [...executorRef.leadNames],
-                                headerInfo: executorRef.headerInfo,
-                            },
-                        };
-                    }
-                },
+                executeTool,
+                onProgress,
                 state.aiConfig.reasoningEffort || undefined
             );
 

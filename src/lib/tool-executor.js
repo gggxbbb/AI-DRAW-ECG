@@ -1,4 +1,5 @@
 import { validateToolCall } from './ecg-constraints';
+import { pyodideRuntime } from './pyodide-runtime';
 
 export class ToolExecutor {
     constructor(renderer) {
@@ -15,6 +16,7 @@ export class ToolExecutor {
         this.headerInfo = null;
         this.programmaticAnalysis = null;
         this.rhythmConsistency = null;
+        this.lastPythonOutput = null;
     }
 
     getRemainingTasks() {
@@ -33,7 +35,7 @@ export class ToolExecutor {
         return this.leadCount >= 12 && this.initDone && this.rhythmDone && this.interpDone && this.descriptionsDone;
     }
 
-    executeSingle(toolCall, onLeadRendered) {
+    async executeSingle(toolCall, onLeadRendered) {
         const errors = validateToolCall(toolCall);
         if (errors.length > 0) return { success: false, errors };
 
@@ -125,6 +127,31 @@ export class ToolExecutor {
                 if (onLeadRendered) onLeadRendered(toolCall.lead, this.leadCount);
                 return { success: true, action: 'drawLeadCurveCSV', lead: toolCall.lead, count: this.leadCount, redraw: isRedraw };
             }
+            case 'drawAllLeadsCSV': {
+                if (!this.initDone) return { success: false, errors: ['请先调用 initRender'] };
+                const leadsObj = toolCall.leads;
+                if (!leadsObj || typeof leadsObj !== 'object') return { success: false, errors: ['leads 必须是对象'] };
+                const errors = [];
+                const parsedLeads = [];
+                for (const [lead, csv] of Object.entries(leadsObj)) {
+                    const parsed = this._parseCSVPoints(csv);
+                    if (!parsed.ok) {
+                        errors.push(`${lead}: CSV解析失败 - ${parsed.reason}`);
+                        continue;
+                    }
+                    parsedLeads.push({ lead, points: parsed.points });
+                }
+                if (errors.length > 0) return { success: false, errors };
+                for (const { lead, points } of parsedLeads) {
+                    this.renderer.renderLeadCurveCSV(lead, points, this.storedParams);
+                    if (!this.leadNames.includes(lead)) {
+                        this.leadCount++;
+                        this.leadNames.push(lead);
+                    }
+                    if (onLeadRendered) onLeadRendered(lead, this.leadCount);
+                }
+                return { success: true, action: 'drawAllLeadsCSV', count: this.leadCount, leads: [...this.leadNames] };
+            }
             case 'writeHeaderInfo': {
                 this.headerInfo = toolCall.text;
                 if (this.renderer._layout) {
@@ -143,6 +170,11 @@ export class ToolExecutor {
                 this.aiLeadDescriptions = toolCall.descriptions;
                 this.descriptionsDone = true;
                 return { success: true, action: 'writeLeadDescriptions', complete: true };
+            }
+            case 'runPythonCode': {
+                const result = await pyodideRuntime.run(toolCall.code);
+                this.lastPythonOutput = result;
+                return { success: true, action: 'runPythonCode', result };
             }
         }
         return { success: false, errors: [`未知工具: ${toolCall.tool}`] };

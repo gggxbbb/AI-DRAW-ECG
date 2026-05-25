@@ -13,7 +13,7 @@ export const ECG_LIMITS = {
 };
 
 export const VALID_LEADS = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6'];
-export const VALID_TOOLS = ['drawLeadCurve', 'drawLeadCurveCSV', 'drawRhythmStrip', 'drawRhythmStripCSV', 'initRender', 'writeHeaderInfo', 'writeInterpretation', 'writeLeadDescriptions'];
+export const VALID_TOOLS = ['drawLeadCurve', 'drawLeadCurveCSV', 'drawRhythmStrip', 'drawRhythmStripCSV', 'initRender', 'writeHeaderInfo', 'writeInterpretation', 'writeLeadDescriptions', 'runPythonCode', 'drawAllLeadsCSV'];
 
 export function validateToolCall(call) {
     const errors = [];
@@ -70,6 +70,33 @@ export function validateToolCall(call) {
             }
             break;
         }
+        case 'runPythonCode': {
+            if (typeof call.code !== 'string' || call.code.trim().length < 1) {
+                errors.push('code 必须是非空字符串');
+            }
+            break;
+        }
+        case 'drawAllLeadsCSV': {
+            if (!call.leads || typeof call.leads !== 'object') {
+                errors.push('leads 必须是对象，键为导联名，值为 CSV 字符串');
+                break;
+            }
+            const providedLeads = Object.keys(call.leads);
+            for (const lead of VALID_LEADS) {
+                if (!providedLeads.includes(lead)) {
+                    errors.push(`缺少导联: ${lead}`);
+                }
+            }
+            for (const [lead, csv] of Object.entries(call.leads)) {
+                if (!VALID_LEADS.includes(lead)) {
+                    errors.push(`无效导联: ${lead}`);
+                }
+                if (typeof csv !== 'string' || csv.trim().length < 10) {
+                    errors.push(`${lead} 的 csv 字符串过短`);
+                }
+            }
+            break;
+        }
     }
     return errors;
 }
@@ -98,15 +125,21 @@ function _validatePointArray(errors, points) {
 }
 
 export function buildToolSchemaDescription() {
+     return buildECGSystemPrompt();
+}
+
+export function buildECGSystemPrompt() {
      return `你是一位资深心电生理学专家。根据用户描述的生理病理状态，生成标准12导联心电图。
 
 重要原则：波形必须准确反映病理状态，该抬高的ST段要抬高，该倒置的T波要倒置。不可因为程序分析可能"报异常"而刻意弱化或回避病理特征。不要以"为节省时间/加快速度/考虑上下文长度"等理由省略应该输出的工具调用 — 完整输出所有需要的内容。你可以直接在文本中输出任意长度的 CSV 序列，不存在"文本环境无法生成完整波形"的限制。
 
-输出规则：在单次回复中依次输出所有需要的工具调用（initRender + writeHeaderInfo + 12个 drawLeadCurve 或 drawLeadCurveCSV + drawRhythmStrip 或 drawRhythmStripCSV + writeInterpretation + writeLeadDescriptions），每个调用单独写成一个完整的 { "tool": "...", ... } 对象，之间不要有空行或逗号分隔。
+如果你已经在 Python 环境中计算出了完整的 12 导联波形数据，务必将其绘制出来。不要因为"绘制过程会太慢/迭代次数太多"而中途放弃已生成的数据，去尝试用其他方式重新生成。已算好的数据就是最好的数据，直接用 drawAllLeadsCSV 一次性全部绘制。
 
-严格注意：只输出工具调用 JSON 对象，不要输出任何解释、前言、总结或 Markdown 代码块。直接以 { 开头开始输出工具调用。禁止在工具调用 JSON 之前或之间插入自然语言文本。如果 csv 字段值很长（含 \\n 换行符），它仍然是一个合法的 JSON 字符串字段，直接输出即可。
+工作流程：首先调用 initRender 初始化画布，然后使用 writeHeaderInfo 写入标题。绘制12导联时，推荐使用 drawAllLeadsCSV 一次性提交全部12导联的 CSV 数据（高效、一次调用完成）。也可逐导联使用 drawLeadCurve 或 drawLeadCurveCSV。绘制完成后调用 drawRhythmStrip 或 drawRhythmStripCSV 绘制节律带，最后使用 writeInterpretation 和 writeLeadDescriptions 撰写解读。
 
-关于程序分析反馈：绘制完成后系统会运行程序化波形分析。该分析纯属自动化检测，可能将你刻意绘制的病理性改变误判为"异常"。你作为心电专家判断力远优于自动化程序，若确信自己的波形正确反映了病情，直接无视分析反馈并空回复确认即可。若确实需要修正波形，直接使用 drawLeadCurve 或 drawLeadCurveCSV 重绘对应导联即可（无需 initRender）。
+你可以使用 runPythonCode 在浏览器 Python 环境中运行计算（含 numpy），stdout 结果会立即返回给你，可用于计算复杂波形、批量生成 CSV。
+
+关于程序分析反馈：绘制完成后系统会运行程序化波形分析。该分析纯属自动化检测，可能将你刻意绘制的病理性改变误判为"异常"。你作为心电专家判断力远优于自动化程序，若确信自己的波形正确反映了病情，直接无视分析反馈停止即可。若确实需要修正波形，直接使用 drawLeadCurve 或 drawLeadCurveCSV 重绘对应导联（无需重复 initRender）。
 
 ---
 === 心电生理学基础 ===
@@ -128,67 +161,222 @@ export function buildToolSchemaDescription() {
 - T波：生理状态下正向（除aVR和V1），振幅 < 0.5mV，不对称（升支缓降支陡）
 - 病理状态：ST段抬高/压低、T波倒置/高尖、病理性Q波等异常应根据具体病情明确体现，不可人为正常化
 
-程序化分析阈值参考（下述为自动化检测工具的内部阈值，仅供参考；你的波形应按病情绘制，不必迎合这些阈值）：
+程序化分析阈值参考（下述为自动化检测工具的内部阈值，仅供参考）：
 - ST段抬高：胸导联(V1-V6) ≥0.2mV(2mm) 触发警示，肢导联 ≥0.1mV(1mm)
 - ST段压低：任何导联 ≤-0.1mV 触发警示
 - T波倒置：aVR/V1/III 为正常变异不报告；其余导联 T 波若低于基线 0.1mV 以上报告
 - 病理性Q波：深度 > R波1/3 或 Q波宽度 ≥80ms
-- 下壁导联(II,III,aVF) ST 抬高时：III > II 提示右冠而非回旋支病变
-- 对应性改变：下壁抬高时侧壁压低为对应性；前壁抬高时下壁压低为对应性
-- III导联小Q波及T波倒置属正常变异，III 导联可存在生理性 Q 波
-- 正常参考范围：窦性心率 60-100bpm，QRS 80-100ms，QTc < 460ms（Bazett），电轴 -30°~105°（病理状态下可超出此范围）
+- 正常参考范围：窦性心率 60-100bpm，QRS 80-100ms，QTc < 460ms，电轴 -30°~105°（病理状态下可超出此范围）
 
 数据点基准：
 - 每导联 points[0] 的 mV 值为该导联的等电位基线（通常接近 0）
 - 所有波形偏移以此基线为参考
-- 每个导联选择一个合适的周期数据即可，程序自动循环填充面板
 
----
-=== 绘制引擎选择 ===
+绘制引擎选择：
+- drawAllLeadsCSV：一次性绘制全部12导联（推荐），提交一个 leads 对象，键为导联名，值为 CSV 字符串
+- drawLeadCurve：常规情况，单周期+自动循环，数据通过程序校验
+- drawLeadCurveCSV：逐导联精细控制 — 精细波形(>30点)、多形态波形、复杂病变(碎裂QRS/delta波等)、不规则节律、校验重试困难后
+- drawRhythmStrip：复用已绘制的导联数据循环填充10s
+- drawRhythmStripCSV：CSV直接渲染10s节律带，适合不规则节律`;
+}
 
-drawLeadCurve：常规情况（窦性、单一形态早搏、典型阻滞等）
-  - 数据通过程序校验，校验失败会要求重试
-  - 如果确信数据临床正确但被拒绝，可添加 "insist": true 强制绘制
+export function buildOpenAITools() {
+    const leadNames = VALID_LEADS;
+    const rhythmTypes = [
+        'sinus','sinus_arrhythmia','sinus_with_pvc','sinus_with_wenckebach','sinus_with_mobitz2',
+        'atrial_fibrillation','atrial_flutter','ventricular','ventricular_fibrillation',
+        'torsades','paced','complete_heart_block'
+    ];
 
-drawLeadCurveCSV：以下情况必须/优先使用（全面板直接渲染，不自动循环，不做校验）：
-  1. 数据点超过 30 个（精细波形描述）
-  2. 多形态波形（室早 + 正常搏动形态差异大）
-  3. 复杂病变（碎裂 QRS、epsilon 波、delta 波、巨大 T 波倒置等）
-  4. 不规则节律（房颤 f 波、尖端扭转等不适合单周期表达的）
-  5. 使用 drawLeadCurve 被拒绝后重试困难时
-
----
-=== 工具详细说明 ===
-
-1. initRender\n{ "tool": "initRender", "rhythmType": "sinus", "params": { "heartRate": 72, "qrsDuration": 90, "qtInterval": 390, "qrsAxis": 30 } }
-rhythmType: "sinus"|"atrial_fibrillation"|"atrial_flutter"|"ventricular"|"paced"|"complete_heart_block"|"ventricular_fibrillation"|"torsades"|"sinus_with_pvc"|"sinus_arrhythmia"|"sinus_with_wenckebach"|"sinus_with_mobitz2"
-
-2. writeHeaderInfo（心电图标题信息，可选但推荐）
-{ "tool": "writeHeaderInfo", "text": "患者：急性前壁心梗 | 心率：110bpm | 窦性心动过速" }
-- 根据用户描述整理为简洁的标题信息（1-2行）
-- 会显示在心电图顶部和侧栏，持续可见
-- 文本简洁，通常包含：主要诊断、关键参数、特殊说明
-
-3. drawLeadCurve（单周期模式 — 提供一个心搏周期，系统自动循环填满面板）
-{ "tool": "drawLeadCurve", "lead": "I", "points": [[0,0],[0.03,0.06],[0.08,-0.1],[0.12,1.5],[0.16,-0.2],[0.22,0],[0.28,0.02],[0.34,0.35],[0.45,0]] }
-- 系统自动重复该周期填满导联面板（约 2.5s）
-- 点数：最少 12，推荐 18~25
-- t 严格递增，每点不超过 1.5s
-- 时间跨度 0.5~1.5s，mV 范围 -5.0~+5.0
-- 必须包含：基线、P波、Q波（可为0）、R波、S波（可为0）、J点、ST段、T波
-- 病变特征：ST段抬高/压低（mV值）、T波倒置（负mV）、T波高尖、病理性Q波（深负mV）
-- P波缺失的节律（房颤/房扑/室性/起搏）可省略 P 波
-- 当数据准确但校验不通过时，添加 "insist": true 强制绘制
-
-4. drawLeadCurveCSV（CSV 模式 — 完整面板绘制，不自动循环，不做校验）\n{ "tool": "drawLeadCurveCSV", "lead": "I", "csv": "0.00,0.00\\n0.02,0.02\\n0.04,0.05\\n0.06,0.08\\n0.08,0.06\\n0.10,0.02\\n0.11,0.00\\n0.12,-0.08\\n0.13,-0.12\\n0.14,0.30\\n0.15,1.20\\n0.16,1.50\\n0.17,0.80\\n0.18,-0.15\\n0.20,-0.20\\n0.22,-0.05\\n0.23,0.00\\n0.25,0.02\\n0.28,0.02\\n0.30,0.08\\n0.34,0.30\\n0.38,0.35\\n0.42,0.18\\n0.44,0.02\\n0.46,0.00" }\n- csv 为多行字符串，每行 \"t,mV\"，系统 Catmull-Rom 平滑后**原样渲染整个面板**（不自动循环重复）\n- 时间跨度应覆盖整个导联面板时长（约 2.5s），可包含多个心搏\n- 推荐 50~150 个数据点覆盖完整时长，不规则节律可用更多点\n- t 严格递增，mV 范围 -5.0~+5.0\n- 不做程序校验，由你确保波形符合心电生理学规律和导联间关系
-
-5. drawRhythmStrip（节律带 — 复用已绘制的导联数据循环填充 10s）\n{ "tool": "drawRhythmStrip", "lead": "II" }\n- 自动复用已绘制的 lead="II" 导联数据，渲染底部 10 秒长条节律带\n- 只需指定 lead，无需额外提供数据\n\n6. drawRhythmStripCSV（节律带 CSV — 全面板直接渲染 10s，不自动循环）\n{ "tool": "drawRhythmStripCSV", "csv": "0.00,0.00\\n0.02,0.02\\n..." }\n- csv 为多行字符串，每行 \"t,mV\"，Catmull-Rom 平滑后原样渲染 10s 节律带\n- 时间跨度应覆盖 10s，可包含多个心搏，适合不规则节律全程展示\n- 推荐 200~500 个数据点覆盖 10s\n- t 严格递增，mV 范围 -5.0~+5.0，不做程序校验
-
-7. writeInterpretation
-{ "tool": "writeInterpretation", "text": "完整临床解读，包含心律分析、间期测量、电轴判断、ST-T改变描述、异常发现、鉴别诊断和最终结论，200-500字" }
-
-8. writeLeadDescriptions
-{ "tool": "writeLeadDescriptions", "descriptions": { "I": "描述P-QRS-T各波形特征...", "II": "...", ... "V6": "..." } }
-- 每个导联描述至少 30 字，12 导联全部覆盖`;
+    return [
+        {
+            type: 'function',
+            function: {
+                name: 'initRender',
+                description: '初始化心电图渲染画布，设置基础节律类型和生理参数。必须第一个调用。',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        rhythmType: {
+                            type: 'string',
+                            enum: rhythmTypes,
+                            description: '基础节律类型'
+                        },
+                        params: {
+                            type: 'object',
+                            properties: {
+                                heartRate: { type: 'integer', minimum: 20, maximum: 300, description: '心率 (bpm)' },
+                                qrsDuration: { type: 'integer', minimum: 40, maximum: 300, description: 'QRS时限 (ms)' },
+                                qtInterval: { type: 'integer', minimum: 180, maximum: 800, description: 'QT间期 (ms)' },
+                                qrsAxis: { type: 'integer', minimum: -180, maximum: 180, description: 'QRS电轴 (度)' }
+                            },
+                            required: ['heartRate','qrsDuration','qtInterval','qrsAxis']
+                        }
+                    },
+                    required: ['rhythmType','params']
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'writeHeaderInfo',
+                description: '写入心电图标题信息，显示在顶部和侧栏',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        text: {
+                            type: 'string',
+                            description: '标题文本，包含主要诊断、关键参数，1-2行'
+                        }
+                    },
+                    required: ['text']
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'drawLeadCurve',
+                description: '单周期模式：提供一个心搏周期的数据点，系统自动循环填满导联面板。数据会通过程序校验。',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        lead: { type: 'string', enum: leadNames, description: '导联名称' },
+                        points: {
+                            type: 'array',
+                            items: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
+                            minItems: 12,
+                            description: '[[t,mV],...] 时间严格递增，mV范围-5~+5，时间跨度0.5~1.5s'
+                        },
+                        insist: {
+                            type: 'boolean',
+                            description: '数据准确但校验失败时，设为true强制绘制'
+                        }
+                    },
+                    required: ['lead','points']
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'drawLeadCurveCSV',
+                description: 'CSV模式：完整面板直接渲染，不自动循环，不做校验。优先用于精细波形(>30点)、多形态、复杂病变、不规则节律。',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        lead: { type: 'string', enum: leadNames, description: '导联名称' },
+                        csv: {
+                            type: 'string',
+                            description: '多行CSV，每行"t,mV"，时间跨度约2.5s覆盖完整面板，推荐50~150点'
+                        }
+                    },
+                    required: ['lead','csv']
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'drawAllLeadsCSV',
+                description: '一次性绘制全部12导联（推荐）。提交 leads 对象，键为 I,II,III,aVR,aVL,aVF,V1~V6，值为对应 CSV 字符串。一次调用完成全部绘制，高效。',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        leads: {
+                            type: 'object',
+                            description: '12导联 CSV 数据，键为导联名，值为多行CSV字符串（每行"t,mV"）',
+                            additionalProperties: { type: 'string' }
+                        }
+                    },
+                    required: ['leads']
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'drawRhythmStrip',
+                description: '节律带：复用已绘制的导联数据，循环填充底部10秒长条',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        lead: { type: 'string', enum: leadNames, description: '复用该导联的数据绘制节律带，通常用II导联' }
+                    },
+                    required: ['lead']
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'drawRhythmStripCSV',
+                description: '节律带CSV：CSV直接渲染10秒节律带，不自动循环，适合不规则节律全程展示',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        csv: {
+                            type: 'string',
+                            description: '多行CSV，每行"t,mV"，时间跨度应覆盖10s，推荐200~500点'
+                        }
+                    },
+                    required: ['csv']
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'writeInterpretation',
+                description: '撰写完整临床解读：心律分析、间期测量、电轴判断、ST-T改变、异常发现、鉴别诊断、结论，200-500字',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        text: {
+                            type: 'string',
+                            description: '完整临床解读文本'
+                        }
+                    },
+                    required: ['text']
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'writeLeadDescriptions',
+                description: '12导联逐一描述P-QRS-T波形特征',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        descriptions: {
+                            type: 'object',
+                            description: '键为导联名，值为特征描述（每导联至少30字）',
+                            additionalProperties: { type: 'string' }
+                        }
+                    },
+                    required: ['descriptions']
+                }
+            }
+        },
+        {
+            type: 'function',
+            function: {
+                name: 'runPythonCode',
+                description: '在浏览器 Pyodide (CPython 3.12 + numpy) 环境中执行 Python 代码。stdout 立即返回。用于计算复杂病理波形、批量生成 CSV、验证导联关系。变量跨调用保留。',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        code: {
+                            type: 'string',
+                            description: 'Python 代码，可 import numpy as np，用 print() 输出结果'
+                        }
+                    },
+                    required: ['code']
+                }
+            }
+        }
+    ];
 }
 

@@ -1,5 +1,14 @@
-import { parseToolCallsFromAIResponse } from './tool-executor';
-import { buildToolSchemaDescription } from './ecg-constraints';
+import OpenAI from 'openai';
+import { buildECGSystemPrompt, buildOpenAITools } from './ecg-constraints';
+
+function normalizeToolCall(tc) {
+    const args = tc.function.parsed_arguments || {};
+    const out = { tool: tc.function.name, _toolCallId: tc.id };
+    for (const [k, v] of Object.entries(args)) {
+        out[k] = v;
+    }
+    return out;
+}
 
 export class AIClient {
     constructor() {
@@ -8,6 +17,7 @@ export class AIClient {
         this.model = 'gpt-4o';
         this.temperature = 0.3;
         this.maxTokens = 32768;
+        this.client = null;
         this._abortController = null;
     }
 
@@ -16,20 +26,26 @@ export class AIClient {
         this.token = token.trim();
         this.model = model.trim();
         this.temperature = temperature;
+        this.client = new OpenAI({
+            apiKey: this.token,
+            baseURL: this.endpoint || undefined,
+            dangerouslyAllowBrowser: true,
+        });
     }
 
     async testConnection() {
-        if (!this.endpoint || !this.token) throw new Error('请先配置API Endpoint和Token');
+        if (!this.client) throw new Error('请先配置API Endpoint和Token');
         try {
-            const resp = await fetch(this.endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
-                body: JSON.stringify({ model: this.model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 10, temperature: 0 }),
+            const resp = await this.client.chat.completions.create({
+                model: this.model,
+                messages: [{ role: 'user', content: 'ping' }],
+                max_tokens: 10,
+                temperature: 0,
             });
-            if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error?.message || `HTTP ${resp.status}`); }
-            const d = await resp.json();
-            return { success: true, model: d.model || this.model };
-        } catch (err) { throw new Error(`连接失败: ${err.message}`); }
+            return { success: true, model: resp.model || this.model };
+        } catch (err) {
+            throw new Error(`连接失败: ${err.message}`);
+        }
     }
 
     abort() {
@@ -39,182 +55,218 @@ export class AIClient {
         }
     }
 
-    async streamCall(messages, onReasoning, onToolCall, reasoningEffort) {
-        if (!this.endpoint || !this.token) throw new Error('请先配置API Endpoint和Token');
+    async streamCall(messages, onReasoning, onChunk, opts = {}) {
+        if (!this.client) throw new Error('请先配置API Endpoint和Token');
+
+        const body = {
+            model: this.model,
+            messages,
+            max_tokens: this.maxTokens,
+            temperature: this.temperature,
+            stream: true,
+        };
+        if (opts.reasoningEffort) body.reasoning_effort = opts.reasoningEffort;
+        if (opts.tools) body.tools = opts.tools;
 
         this._abortController = new AbortController();
-        const body = { model: this.model, messages, max_tokens: this.maxTokens, temperature: this.temperature, stream: true };
-        if (reasoningEffort) body.reasoning_effort = reasoningEffort;
+        body.signal = this._abortController.signal;
 
-        const resp = await fetch(this.endpoint, {
-            method: 'POST',
-            signal: this._abortController.signal,
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
-            body: JSON.stringify(body),
-        });
-        if (!resp.ok) {
-            const e = await resp.json().catch(() => ({}));
-            throw new Error(`API错误: ${e.error?.message || `HTTP ${resp.status}`}`);
-        }
+        const stream = await this.client.chat.completions.create(body);
 
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
         let fullContent = '';
-        let toolIndex = 0;
+        let fullReasoning = '';
+        const toolCallsAcc = [];
         let usage = null;
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
+        for await (const chunk of stream) {
+            if (chunk.usage) usage = chunk.usage;
 
-            for (const line of chunk.split('\n')) {
-                if (!line.startsWith('data: ')) continue;
-                const data = line.slice(6);
-                if (data === '[DONE]') break;
-                try {
-                    const parsed = JSON.parse(data);
-                    if (parsed.usage) usage = parsed.usage;
-                    const delta = parsed.choices?.[0]?.delta;
-                    if (!delta) continue;
+            const delta = chunk.choices?.[0]?.delta;
+            if (!delta) continue;
 
-                    const reasoning = delta.reasoning_content;
-                    if (reasoning && onReasoning) onReasoning(reasoning, 'reasoning');
+            if (delta.reasoning_content) {
+                fullReasoning += delta.reasoning_content;
+                if (onReasoning) onReasoning(delta.reasoning_content, 'reasoning');
+            }
 
-                    const content = delta.content;
-                    if (!content) continue;
-                    if (onReasoning) onReasoning(content, 'content');
-                    buffer += content;
-                    fullContent += content;
+            if (delta.content) {
+                if (onReasoning) onReasoning(delta.content, 'content');
+                fullContent += delta.content;
+                if (onChunk) onChunk(delta.content);
+            }
 
-                    let braceDepth = 0, inString = false, esc = false, objStart = -1, found = 0;
-                    for (let i = 0; i < buffer.length; i++) {
-                        const ch = buffer[i];
-                        if (esc) { esc = false; continue; }
-                        if (ch === '\\') { esc = true; continue; }
-                        if (ch === '"') { inString = !inString; continue; }
-                        if (inString) continue;
-                        if ('[ ],\n\r\t'.includes(ch)) continue;
-                        if (ch === '{') { if (braceDepth === 0) objStart = i; braceDepth++; }
-                        else if (ch === '}') {
-                            braceDepth--;
-                            if (braceDepth === 0 && objStart >= 0) {
-                                try {
-                                    const obj = JSON.parse(buffer.slice(objStart, i + 1));
-                                    found++;
-                                    onToolCall(obj, toolIndex++);
-                                } catch (e) {}
-                            }
-                        }
+            if (delta.tool_calls) {
+                for (const tcDelta of delta.tool_calls) {
+                    const idx = tcDelta.index;
+                    if (!toolCallsAcc[idx]) {
+                        toolCallsAcc[idx] = { id: '', type: 'function', function: { name: '', arguments: '' } };
                     }
-                    if (found > 0) {
-                        const lb = buffer.lastIndexOf('}');
-                        if (lb >= 0) buffer = buffer.slice(lb + 1);
-                    }
-                } catch (e) {}
+                    const acc = toolCallsAcc[idx];
+                    if (tcDelta.id) acc.id = tcDelta.id;
+                    if (tcDelta.type) acc.type = tcDelta.type;
+                    if (tcDelta.function?.name) acc.function.name = tcDelta.function.name;
+                    if (tcDelta.function?.arguments) acc.function.arguments += tcDelta.function.arguments;
+                }
             }
         }
-        return { toolIndex, usage, content: fullContent.trim() };
+
+        if (toolCallsAcc.length > 0) {
+            for (const tc of toolCallsAcc) {
+                try {
+                    tc.function.parsed_arguments = JSON.parse(tc.function.arguments);
+                } catch (e) {
+                    tc.function.parsed_arguments = {};
+                }
+            }
+        }
+
+        const usageOut = usage ? {
+            prompt_tokens: usage.prompt_tokens || 0,
+            completion_tokens: usage.completion_tokens || 0,
+            total_tokens: usage.total_tokens || 0,
+        } : null;
+
+        return {
+            content: fullContent.trim(),
+            reasoning: fullReasoning.trim() || null,
+            toolCalls: toolCallsAcc.length > 0 ? toolCallsAcc : null,
+            usage: usageOut,
+        };
     }
 
-    async generateMultiRound(condition, additionalParams, onReasoning, onToolCall, onProgress, reasoningEffort) {
-        const systemPrompt = buildToolSchemaDescription();
-        let messages = [
+    async agentLoop(condition, additionalParams, onReasoning, executeTool, onProgress, reasoningEffort) {
+        if (!this.client) throw new Error('请先配置API Endpoint和Token');
+
+        const systemPrompt = buildECGSystemPrompt();
+        const tools = buildOpenAITools();
+
+        const messages = [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: `请根据以下生理病理描述生成12导联心电图，依次输出全部工具调用。\n\n患者描述：${condition}${additionalParams ? `\n补充参数：${additionalParams}` : ''}` },
+            { role: 'user', content: `请根据以下生理病理描述生成12导联心电图。\n\n患者描述：${condition}${additionalParams ? `\n补充参数：${additionalParams}` : ''}` },
         ];
 
-        let remaining = null;
-        let errors = [];
-        let round = 0;
-        let analysisRounds = 0;
+        let iteration = 0;
+        const maxIterations = 80;
+        let correctionRounds = 0;
+        const maxCorrections = 2;
 
-        while (round < 5) {
-            round++;
-            onProgress({ type: 'round', round, messages });
+        while (iteration < maxIterations) {
+            iteration++;
+            onProgress({ type: 'iteration', iteration });
 
-            let totalTools = 0;
-            const roundTools = [];
-            let roundContent = '';
-            let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+            let result;
             try {
-                const result = await this.streamCall(messages, onReasoning, (tool, idx) => {
-                    totalTools++;
-                    roundTools.push(tool);
-                    onToolCall(tool, idx, round);
-                }, reasoningEffort);
-                roundContent = result.content || '';
-                if (result.usage) {
-                    totalUsage.prompt_tokens += result.usage.prompt_tokens || 0;
-                    totalUsage.completion_tokens += result.usage.completion_tokens || 0;
-                    totalUsage.total_tokens += result.usage.total_tokens || 0;
-                }
-                onProgress({ type: 'usage', ...totalUsage });
+                result = await this.streamCall(messages, onReasoning, null, {
+                    reasoningEffort: reasoningEffort || undefined,
+                    tools,
+                });
             } catch (err) {
-                if (err && err.name === 'AbortError') return { success: false, rounds: round, aborted: true };
+                if (err && err.name === 'AbortError') return { success: false, iterations: iteration, aborted: true };
                 throw err;
             }
 
-            onProgress({ type: 'roundDone', round, count: totalTools });
+            if (result.usage) {
+                onProgress({
+                    type: 'usage',
+                    prompt_tokens: result.usage.prompt_tokens,
+                    completion_tokens: result.usage.completion_tokens,
+                    total_tokens: result.usage.total_tokens,
+                });
+            }
+
+            if (result.toolCalls && result.toolCalls.length > 0) {
+                const assistantMsg = {
+                    role: 'assistant',
+                    content: result.content || null,
+                    tool_calls: result.toolCalls.map(tc => ({
+                        id: tc.id,
+                        type: tc.type,
+                        function: {
+                            name: tc.function.name,
+                            arguments: tc.function.arguments,
+                        },
+                    })),
+                };
+                if (result.reasoning) assistantMsg.reasoning_content = result.reasoning;
+                messages.push(assistantMsg);
+
+                let totalTools = 0;
+                for (const tc of result.toolCalls) {
+                    const normalized = normalizeToolCall(tc);
+                    totalTools++;
+                    onProgress({ type: 'toolStart', toolCall: normalized, iteration });
+                    const execResult = await executeTool(normalized);
+                    onProgress({ type: 'toolEnd', toolCall: normalized, result: execResult, iteration });
+                    messages.push({
+                        role: 'tool',
+                        tool_call_id: tc.id,
+                        name: tc.function.name,
+                        content: JSON.stringify(execResult),
+                    });
+                }
+
+                onProgress({ type: 'iterationDone', iteration, toolCount: totalTools });
+
+                const status = onProgress({ type: 'getStatus' });
+                if (status && !status.complete) continue;
+
+                if (status?.analysisFeedback && correctionRounds < maxCorrections) {
+                    correctionRounds++;
+                    messages.push({
+                        role: 'user',
+                        content: `所有工具已完成，程序自动分析结果如下（仅供参考，纯属自动化检测，无法替代临床判断）：\n\n${status.analysisFeedback}\n\n程序分析可能将你刻意绘制的病理性改变误报为"异常"。如果你确信这些波形正确反映了病情，无需操作，直接停止。仅当你认为波形确实画错了（与病情不符）时才修正：直接使用 drawLeadCurve 或 drawLeadCurveCSV 重绘对应导联（画布已就绪，无需 initRender）。`,
+                    });
+                    continue;
+                }
+
+                if (status?.analysisFeedback) {
+                    return { success: true, iterations: iteration };
+                }
+
+                if (status?.complete) {
+                    return { success: true, iterations: iteration };
+                }
+
+                continue;
+            }
 
             const status = onProgress({ type: 'getStatus' });
-            if (status && status.complete && !status.analysisFeedback) return { success: true, rounds: round };
 
-            const remainingTasks = status ? status.remaining : [];
-            const roundErrors = status ? status.errors : [];
-            const analysisFeedback = status ? status.analysisFeedback : null;
-
-            if (remainingTasks.length === 0 && !analysisFeedback) {
-                if (roundErrors.length > 0) {
-                    messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
-                    messages.push({ role: 'user', content: `以下工具调用失败:\n${roundErrors.join('\n')}\n仅重新生成失败的工具，不要重复已成功的其他工具。` });
-                } else {
-                    return { success: true, rounds: round };
+            if (status?.analysisFeedback && correctionRounds < maxCorrections && status.complete) {
+                correctionRounds++;
+                if (result.content || result.reasoning) {
+                    const am = { role: 'assistant', content: result.content || null };
+                    if (result.reasoning) am.reasoning_content = result.reasoning;
+                    messages.push(am);
                 }
-            } else if (remainingTasks.length === 0 && analysisFeedback) {
-                if (totalTools === 0) return { success: true, rounds: round };
-                if (analysisRounds >= 2) {
-                    return { success: true, rounds: round };
-                }
-                analysisRounds++;
-                messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
-                messages.push({ role: 'user', content: `所有工具已完成，程序自动分析结果如下（仅供参考，纯属自动化检测，无法替代临床判断）：\n\n${analysisFeedback}\n\n程序分析可能将你刻意绘制的病理性改变误报为"异常"。如果你确信这些波形正确反映了病情，直接空回复确认即可。仅当你认为波形确实画错了（与病情不符）时才修正：直接输出 drawLeadCurve 或 drawLeadCurveCSV 重绘对应导联（画布已就绪，无需 initRender）。` });
-            } else {
-                const ctx = status?.context;
-                const isWritingOnly = remainingTasks.every(t =>
-                    t.includes('writeInterpretation') || t.includes('writeLeadDescriptions')
-                );
-                let contextNote = '';
-                if (isWritingOnly && ctx?.params) {
-                    const p = ctx.params;
-                    const rMap = {
-                        'sinus':'窦性心律','sinus_arrhythmia':'窦性心律不齐','atrial_fibrillation':'心房颤动',
-                        'atrial_flutter':'心房扑动','ventricular':'室性心动过速','paced':'心室起搏',
-                        'complete_heart_block':'III°AVB','ventricular_fibrillation':'心室颤动','torsades':'尖端扭转',
-                        'sinus_with_pvc':'窦性+室早','sinus_with_wenckebach':'II°I型AVB','sinus_with_mobitz2':'II°II型AVB',
-                    };
-                    contextNote = `\n\n心电图上下文：\n患者描述：${condition}\n心律：${rMap[p.rhythmType]||p.rhythmType} | 心率：${p.heartRate}bpm | QRS：${p.qrsDuration}ms | QT：${p.qtInterval}ms | 电轴：${p.qrsAxis}°\n已绘制：${ctx.leadsDone?.join(',')||'全部12导联'}\n标题：${ctx.headerInfo||'无'}\n\n请根据以上参数和已绘制的波形数据，为这幅心电图撰写临床解读和导联描述。`;
-                }
-                if (totalTools === 0) {
-                    if (analysisRounds > 0 && status && status.complete) {
-                        return { success: true, rounds: round };
-                    }
-                    if (roundContent) {
-                        messages.push({ role: 'assistant', content: roundContent });
-                    }
-                    messages.push({ role: 'user', content: `以上是上轮你的输出文本（未识别到有效工具调用JSON）。请**直接**输出JSON工具调用对象，跳过分析思考，不要解释。立即以 { 开头：\n\n{ "tool": "initRender", "rhythmType": "sinus", "params": { ... } }\n{ "tool": "drawLeadCurveCSV", "lead": "I", "csv": "0.00,0.00\\n0.02,0.02\\n..." }\n...` });
-                } else {
-                    messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
-                    const alreadyDone = remainingTasks.length > 0
-                        ? `\n\n重要：已完成的任务（initRender、已绘制的导联）无需重复。只输出上方 ☐ 标记的缺失项，不要重新生成整个心电图。`
-                        : '';
-                    messages.push({ role: 'user', content: `任务未完，仅输出缺失项：\n${remainingTasks.map(t => '□ ' + t).join('\n')}${contextNote}${alreadyDone}\n${
-                        roundErrors.length ? '\n错误:\n' + roundErrors.join('\n') + '\n仅重新生成失败的工具。' : ''
-                    }` });
-                }
+                messages.push({
+                    role: 'user',
+                    content: `程序自动分析结果如下（仅供参考）：\n\n${status.analysisFeedback}\n\n如果你确信波形正确反映了病情，无需操作。仅当你认为波形需要修正时才调用工具重绘。`,
+                });
+                continue;
             }
+
+            if (status?.complete || status?.analysisFeedback) {
+                return { success: true, iterations: iteration };
+            }
+
+            const remaining = status?.remaining || [];
+            if (remaining.length > 0) {
+                if (result.content || result.reasoning) {
+                    const am = { role: 'assistant', content: result.content || null };
+                    if (result.reasoning) am.reasoning_content = result.reasoning;
+                    messages.push(am);
+                }
+                messages.push({
+                    role: 'user',
+                    content: `任务未完成，请继续。缺失项：\n${remaining.map(t => '□ ' + t).join('\n')}`,
+                });
+                continue;
+            }
+
+            return { success: true, iterations: iteration };
         }
-        return { success: false, rounds: round, error: '达到最大重试次数' };
+
+        return { success: false, iterations: iteration, error: '达到最大迭代次数' };
     }
 }

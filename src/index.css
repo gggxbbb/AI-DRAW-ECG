@@ -92,6 +92,42 @@ html, body {
     color: rgba(255,255,255,0.6);
 }
 
+.pyodide-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.72rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.85);
+    white-space: nowrap;
+}
+.py-spinner {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: py-spin 0.8s linear infinite;
+}
+@keyframes py-spin { to { transform: rotate(360deg); } }
+.py-check { color: #4ade80; font-size: 0.7rem; font-weight: bold; }
+.py-error-icon { color: #f87171; font-size: 0.7rem; font-weight: bold; }
+
+.pyodide-badge.status-success {
+    background: rgba(74,222,128,0.15);
+    color: #bbf7d0;
+}
+.pyodide-badge.status-loading {
+    background: rgba(250,204,21,0.12);
+    color: #fef08a;
+}
+.pyodide-badge.status-error {
+    background: rgba(248,113,113,0.15);
+    color: #fecaca;
+}
+
 .main-content {
     display: flex;
     flex: 1;
