@@ -63,7 +63,7 @@ class PyodideRuntime {
             });
         }
         const pyodide = await globalThis.loadPyodide();
-        await pyodide.loadPackage('numpy');
+        await pyodide.loadPackage(['numpy', 'scipy']);
         return pyodide;
     }
 
