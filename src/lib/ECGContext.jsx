@@ -13,10 +13,13 @@ const initialState = {
     interpretation: null,
     aiInterpretation: null,
     aiLeadDescriptions: null,
+    headerInfo: null,
     programmaticAnalysis: null,
     rawReasoning: '',
+    lastReasoningCat: '',
     streamProgress: '',
     progressBar: '',
+    progressPhase: '',
     status: { text: '', className: '' },
     isGenerating: false,
     toasts: [],
@@ -30,11 +33,19 @@ function reducer(state, action) {
         case 'SET_INTERPRETATION': return { ...state, interpretation: action.payload };
         case 'SET_AI_INTERPRETATION': return { ...state, aiInterpretation: action.payload };
         case 'SET_AI_LEAD_DESCRIPTIONS': return { ...state, aiLeadDescriptions: action.payload };
+        case 'SET_HEADER_INFO': return { ...state, headerInfo: action.payload };
         case 'SET_PROGRAMMATIC_ANALYSIS': return { ...state, programmaticAnalysis: action.payload };
-        case 'APPEND_REASONING': return { ...state, rawReasoning: state.rawReasoning + action.payload };
-        case 'CLEAR_REASONING': return { ...state, rawReasoning: '' };
+        case 'APPEND_REASONING': {
+            const cat = action.category || '';
+            const lastCat = state.lastReasoningCat;
+            const close = (cat && cat !== lastCat && lastCat) ? `[/${lastCat}]` : '';
+            const open = (cat && cat !== lastCat) ? `[${cat}]` : '';
+            return { ...state, rawReasoning: state.rawReasoning + close + open + action.payload, lastReasoningCat: cat || lastCat };
+        }
+        case 'CLEAR_REASONING': return { ...state, rawReasoning: '', lastReasoningCat: '' };
         case 'SET_STREAM_PROGRESS': return { ...state, streamProgress: action.payload };
         case 'SET_PROGRESS_BAR': return { ...state, progressBar: action.payload };
+        case 'SET_PROGRESS_PHASE': return { ...state, progressPhase: action.payload };
         case 'SET_STATUS': return { ...state, status: action.payload };
         case 'SET_GENERATING': return { ...state, isGenerating: action.payload };
         case 'ADD_TOAST':
@@ -44,9 +55,11 @@ function reducer(state, action) {
     }
 }
 
-const BAR = '\u2588';
-const SPACE = '\u2591';
-function progressBarStr(count) { return BAR.repeat(count) + SPACE.repeat(12 - count); }
+function progressBarStr(count, phase) {
+    const phases = { init: '初始化', leads: `导联 ${count}/12`, rhythm: '节律带', interp: 'AI解读', desc: '导联描述', done: '完成' };
+    const p = phase || 'leads';
+    return `${phases[p] || p}`;
+}
 
 export function ECGProvider({ children }) {
     const [state, dispatch] = useReducer(reducer, initialState);
@@ -85,6 +98,8 @@ export function ECGProvider({ children }) {
         dispatch({ type: 'CLEAR_REASONING' });
         dispatch({ type: 'SET_STREAM_PROGRESS', payload: '' });
         dispatch({ type: 'SET_PROGRESS_BAR', payload: '' });
+        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'init' });
+        dispatch({ type: 'SET_HEADER_INFO', payload: null });
         dispatch({ type: 'SET_PARAMS', payload: null });
         dispatch({ type: 'SET_INTERPRETATION', payload: null });
         dispatch({ type: 'SET_AI_INTERPRETATION', payload: null });
@@ -110,36 +125,51 @@ export function ECGProvider({ children }) {
                 condition, additionalParams,
                 (text, type) => {
                     if (type === 'reasoning') {
-                        dispatch({ type: 'APPEND_REASONING', payload: text });
+                        dispatch({ type: 'APPEND_REASONING', payload: text, category: '推理' });
                     }
                 },
                 (toolCall, idx, round) => {
                     dispatch({ type: 'SET_STATUS', payload: { text: `第${round}轮 · 工具#${idx + 1}`, className: 'status-loading' } });
+                    const toolLabel = ['drawLeadCurve', 'drawLeadCurveCSV'].includes(toolCall.tool)
+                        ? `${toolCall.tool.replace('drawLeadCurve', '导联').replace('CSV', '(CSV)')} → ${toolCall.lead}`
+                        : toolCall.tool;
+                    dispatch({ type: 'APPEND_REASONING', payload: toolLabel, category: '工具' });
                     const result = executorRef.executeSingle(toolCall, (lead, count) => {
                         totalLeads = count;
                         dispatch({ type: 'SET_STREAM_PROGRESS', payload: `${lead} (${count}/12)` });
-                        dispatch({ type: 'SET_PROGRESS_BAR', payload: progressBarStr(count) });
+                        dispatch({ type: 'SET_PROGRESS_BAR', payload: progressBarStr(count, 'leads') });
+                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'leads' });
                     });
                     if (!result.success) {
-                        dispatch({ type: 'APPEND_REASONING', payload: `\n## 错误: ${result.errors.join('; ')}\n` });
+                        dispatch({ type: 'APPEND_REASONING', payload: result.errors.join('; '), category: '错误' });
                         roundErrors.push(...result.errors);
                         return;
                     }
                     if (result.warned) {
-                        dispatch({ type: 'APPEND_REASONING', payload: `\n⚠ ${result.lead} 验证警告: ${result.warning}（AI 执意绘制）\n` });
+                        dispatch({ type: 'APPEND_REASONING', payload: `${result.lead} 验证警告: ${result.warning}（AI 执意绘制）`, category: '警告' });
                     }
                     if (result.action === 'init') {
+                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'init' });
+                        dispatch({ type: 'SET_PROGRESS_BAR', payload: '初始化完成' });
                         dispatch({ type: 'SET_PARAMS', payload: executorRef.storedParams });
                     }
+                    if (result.action === 'writeHeaderInfo') {
+                        dispatch({ type: 'SET_HEADER_INFO', payload: executorRef.headerInfo });
+                    }
                     if (result.action === 'drawRhythmStrip') {
+                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'rhythm' });
+                        dispatch({ type: 'SET_PROGRESS_BAR', payload: '节律带' });
                         const curves = renderer._leadCurves || {};
                         const prog = ecgAnalyzer.analyze(executorRef.storedParams, curves);
                         dispatch({ type: 'SET_PROGRAMMATIC_ANALYSIS', payload: prog });
                     }
                     if (result.action === 'writeInterpretation') {
+                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'interp' });
+                        dispatch({ type: 'SET_PROGRESS_BAR', payload: 'AI 解读' });
                         dispatch({ type: 'SET_AI_INTERPRETATION', payload: executorRef.aiInterpretation });
                     }
                     if (result.complete || (result.action === 'drawRhythmStrip' && executorRef.leadCount >= 12)) {
+                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'desc' });
                         dispatch({ type: 'SET_AI_LEAD_DESCRIPTIONS', payload: executorRef.aiLeadDescriptions || null });
                     }
                     lastAction = result.action;
@@ -150,7 +180,7 @@ export function ECGProvider({ children }) {
                         dispatch({ type: 'SET_STATUS', payload: { text: `第${info.round}轮生成中...`, className: 'status-loading' } });
                     }
                     if (info.type === 'roundDone') {
-                        dispatch({ type: 'APPEND_REASONING', payload: `\n--- 第${info.round}轮完成 (${info.count}个工具调用) ---\n` });
+                        dispatch({ type: 'APPEND_REASONING', payload: `第${info.round}轮完成 (${info.count}个工具调用)`, category: '状态' });
                     }
                     if (info.type === 'getStatus') {
                         if (!executorRef) return { complete: true, remaining: [], errors: [] };

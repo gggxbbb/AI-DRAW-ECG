@@ -12,7 +12,7 @@ export class ECGRenderer {
         this.onInterpretationChange = null;
         this._leadCurves = {};
         this.GRID_SQUARES_W = 10;
-        this.GRID_SQUARES_H = 8;
+        this.GRID_SQUARES_H = 4;
         this.RHYTHM_SQUARES_H = 4;
         this.LEAD_COLS = 4;
         this.LEAD_ROWS = 3;
@@ -118,6 +118,22 @@ export class ECGRenderer {
         ctx.restore();
     }
 
+    drawHeaderText(text) {
+        this._headerText = text;
+        if (!text || !this._layout) return;
+        const ctx = this.ctx;
+        const L = this._layout;
+        const headerY = L.offsetY - this.mmToPx(3);
+        if (headerY < this.mmToPx(2)) return;
+        ctx.save();
+        ctx.fillStyle = '#555';
+        ctx.font = `bold ${7 * this.zoomLevel}px "Segoe UI", sans-serif`;
+        ctx.textBaseline = 'bottom';
+        ctx.textAlign = 'center';
+        ctx.fillText(text, L.offsetX + L.totalW / 2, headerY);
+        ctx.restore();
+    }
+
     renderInit(params, { keepCurves = false } = {}) {
         this.params = params;
         this.initCanvas();
@@ -128,8 +144,10 @@ export class ECGRenderer {
         const L = this.calcLayout();
         this.drawFullGrid(L.offsetX, L.offsetY, L.totalW, L.totalH);
         this._layout = L;
+        this._drawWatermark();
         this._leadDuration = 2.5;
         this._rhythmDuration = 10;
+        if (!keepCurves) this._headerText = null;
         this._leadPanels = [];
         if (!keepCurves) this._leadCurves = {};
 
@@ -153,11 +171,12 @@ export class ECGRenderer {
             ctx.save();
             this.applyLeadLabelTextStyle(ctx);
             ctx.textAlign = 'left';
-            ctx.fillText('II', this._rhythmPanel.x + 2, this.getLabelTopY(this._rhythmPanel.y) - (1 * this.zoomLevel));
+            ctx.fillText('II', this._rhythmPanel.x + 2, this.getLabelTopY(this._rhythmPanel.y));
             ctx.textAlign = 'right';
-            ctx.fillText('Rhythm Strip', this._rhythmPanel.x + this._rhythmPanel.w - 2, this.getLabelTopY(this._rhythmPanel.y) - (1 * this.zoomLevel));
+            ctx.fillText('Rhythm Strip', this._rhythmPanel.x + this._rhythmPanel.w - 2, this.getLabelTopY(this._rhythmPanel.y));
             ctx.restore();
         }
+        if (this._headerText) this.drawHeaderText(this._headerText);
     }
 
     render(params) {
@@ -165,6 +184,25 @@ export class ECGRenderer {
         this._redrawStoredCurves(params);
         this._notifyInterpretation(params);
         return params;
+    }
+
+    _drawWatermark() {
+        const ctx = this.ctx;
+        const L = this._layout;
+        if (!L) return;
+        const cx = L.offsetX + L.totalW / 2;
+        const cy = L.offsetY + L.totalH / 2;
+
+        ctx.save();
+        ctx.globalAlpha = 0.08;
+        ctx.fillStyle = '#666';
+        ctx.font = `bold ${20 * this.zoomLevel}px "Segoe UI", sans-serif`;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'center';
+        ctx.translate(cx, cy);
+        ctx.rotate(-0.25 * Math.PI);
+        ctx.fillText('AI 生成 · 仅供学习参考', 0, 0);
+        ctx.restore();
     }
 
     _redrawStoredCurves(params) {
@@ -211,6 +249,14 @@ export class ECGRenderer {
         }
     }
 
+    renderLeadCurveCSV(lead, points, params) {
+        const panel = this._leadPanels.find(p => p.lead === lead);
+        if (!panel) return;
+        const smoothed = catmullRomSmooth(points, 0.002);
+        this._leadCurves[lead] = smoothed;
+        this.drawPointCurveInRect(panel.x, panel.y, panel.w, panel.h, smoothed, params, this._leadDuration);
+    }
+
     drawMultiBeatInRect(rx, ry, rw, rh, pts, duration) {
         const ctx = this.ctx;
         const bl = ry + rh * 0.5;
@@ -253,7 +299,7 @@ export class ECGRenderer {
             const off = r * cycleLen;
             for (const [t, mv] of curvePoints) {
                 const at = off + (t - time0);
-                if (at < duration) pts.push({ time: at, mv });
+                pts.push({ time: at, mv });
             }
         }
 
@@ -264,13 +310,22 @@ export class ECGRenderer {
 
         let started = false;
         const lm = this.mmToPx(1);
+        let prevSx = 0, prevSy = 0;
         for (const pt of pts) {
             const sx = rx + (pt.time / duration) * rw;
             const sy = bl - this.mvToPx(pt.mv - baselineMv);
-            if (sx > rx + rw) break;
-            if (sx < rx - lm) continue;
+            if (sx > rx + rw) {
+                if (started) {
+                    const t = ((rx + rw) - prevSx) / (sx - prevSx);
+                    ctx.lineTo(rx + rw, prevSy + (sy - prevSy) * t);
+                }
+                break;
+            }
+            if (sx < rx - lm) { prevSx = sx; prevSy = sy; continue; }
             if (!started) { ctx.moveTo(sx, sy); started = true; }
             else ctx.lineTo(sx, sy);
+            prevSx = sx;
+            prevSy = sy;
         }
         ctx.stroke();
     }

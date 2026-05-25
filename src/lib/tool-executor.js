@@ -12,6 +12,7 @@ export class ToolExecutor {
         this.descriptionsDone = false;
         this.aiInterpretation = null;
         this.aiLeadDescriptions = null;
+        this.headerInfo = null;
     }
 
     getRemainingTasks() {
@@ -36,6 +37,7 @@ export class ToolExecutor {
 
         switch (toolCall.tool) {
             case 'initRender': {
+                if (this.initDone) return { success: false, errors: ['initRender 已完成，无需重复调用'] };
                 this.storedParams = {
                     heartRate: toolCall.params?.heartRate || 72,
                     qrsDuration: toolCall.params?.qrsDuration || 90,
@@ -93,6 +95,24 @@ export class ToolExecutor {
                 this.rhythmDone = true;
                 return { success: true, action: 'drawRhythmStrip' };
             }
+            case 'drawLeadCurveCSV': {
+                if (!this.initDone) return { success: false, errors: ['请先调用 initRender'] };
+                if (this.leadNames.includes(toolCall.lead)) return { success: false, errors: [`${toolCall.lead} 导联已绘制`] };
+                const parsed = this._parseCSVPoints(toolCall.csv);
+                if (!parsed.ok) return { success: false, errors: [`${toolCall.lead} CSV解析失败: ${parsed.reason}`] };
+                this.renderer.renderLeadCurveCSV(toolCall.lead, parsed.points, this.storedParams);
+                this.leadCount++;
+                this.leadNames.push(toolCall.lead);
+                if (onLeadRendered) onLeadRendered(toolCall.lead, this.leadCount);
+                return { success: true, action: 'drawLeadCurveCSV', lead: toolCall.lead, count: this.leadCount };
+            }
+            case 'writeHeaderInfo': {
+                this.headerInfo = toolCall.text;
+                if (this.renderer._layout) {
+                    this.renderer.drawHeaderText(toolCall.text);
+                }
+                return { success: true, action: 'writeHeaderInfo' };
+            }
             case 'writeInterpretation': {
                 if (this.leadCount < 12) return { success: false, errors: ['请先完成12导联绘制'] };
                 this.aiInterpretation = toolCall.text;
@@ -122,6 +142,24 @@ export class ToolExecutor {
         if (!hasPos && !hasNeg) return { ok: false, reason: '波形无正负变化' };
         if (points[points.length - 1][0] - points[0][0] < 0.3) return { ok: false, reason: '时间跨度不足' };
         return { ok: true };
+    }
+
+    _parseCSVPoints(csv) {
+        const lines = csv.trim().split(/\r?\n/);
+        if (lines.length < 4) return { ok: false, reason: '数据行不足(需>=4)' };
+        const points = [];
+        for (const line of lines) {
+            const parts = line.trim().split(',');
+            if (parts.length < 2) continue;
+            const t = parseFloat(parts[0]);
+            const mv = parseFloat(parts[1]);
+            if (isNaN(t) || isNaN(mv)) continue;
+            points.push([t, mv]);
+        }
+        if (points.length < 4) return { ok: false, reason: '有效数据点不足(需>=4)' };
+        const timeSpan = points[points.length - 1][0] - points[0][0];
+        if (timeSpan < 0.1) return { ok: false, reason: '时间跨度不足' };
+        return { ok: true, points };
     }
 }
 

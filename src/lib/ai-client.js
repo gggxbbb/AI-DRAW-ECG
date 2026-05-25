@@ -106,7 +106,7 @@ export class AIClient {
 
     async generateMultiRound(condition, additionalParams, onReasoning, onToolCall, onProgress, reasoningEffort) {
         const systemPrompt = buildToolSchemaDescription();
-        const messages = [
+        let messages = [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `请根据以下生理病理描述生成12导联心电图，依次输出全部工具调用。\n\n患者描述：${condition}${additionalParams ? `\n补充参数：${additionalParams}` : ''}` },
         ];
@@ -137,19 +137,24 @@ export class AIClient {
 
             if (remainingTasks.length === 0) {
                 if (roundErrors.length > 0) {
-                    messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
-                    messages.push({ role: 'user', content: `以下工具调用失败:\n${roundErrors.join('\n')}\n请重新生成正确的内容。` });
+                    messages.push({ role: 'user', content: `以下工具调用失败:\n${roundErrors.join('\n')}\n仅重新生成失败的工具，不要重复其他内容。` });
                 } else {
                     return { success: true, rounds: round };
                 }
             } else {
-                messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
-                messages.push({
-                    role: 'user',
-                    content: `任务清单中以下项目尚未完成:\n${remainingTasks.map(t => '□ ' + t).join('\n')}\n${
-                        roundErrors.length ? '\n错误:\n' + roundErrors.join('\n') : ''
-                    }\n请继续完成剩余任务。`,
-                });
+                if (totalTools === 0) {
+                    messages = [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: `上一轮你没有任何工具调用。你必须直接输出 JSON 工具调用对象，每个对象一行，格式：{ "tool": "initRender", ... }\n\n立即输出：\n1. initRender\n2. drawLeadCurve x12\n3. drawRhythmStrip\n4. writeInterpretation\n5. writeLeadDescriptions\n\n只输出工具调用 JSON，不要输出解释文字。` },
+                    ];
+                } else {
+                    messages = [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: `任务未完，仅输出缺失项：\n${remainingTasks.map(t => '□ ' + t).join('\n')}\n${
+                            roundErrors.length ? '\n错误:\n' + roundErrors.join('\n') + '\n仅重新生成失败的工具。' : ''
+                        }` },
+                    ];
+                }
             }
         }
         return { success: false, rounds: round, error: '达到最大重试次数' };

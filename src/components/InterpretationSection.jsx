@@ -3,16 +3,26 @@ import { useECG } from '../lib/ECGContext';
 
 export default function InterpretationSection() {
     const { state } = useECG();
-    const { programmaticAnalysis, aiInterpretation, aiLeadDescriptions, currentParams } = state;
+    const { programmaticAnalysis, aiInterpretation, aiLeadDescriptions, currentParams, headerInfo } = state;
     const [showLeads, setShowLeads] = useState(false);
 
-    if (!currentParams && !programmaticAnalysis) return null;
+    if (!currentParams && !programmaticAnalysis && !headerInfo) return null;
 
     const prog = programmaticAnalysis;
     const leadNames = ['I','II','III','aVR','aVL','aVF','V1','V2','V3','V4','V5','V6'];
 
     return (
         <section className="panel-section">
+            {headerInfo && (
+                <div style={{
+                    background: '#f5f0e8', borderLeft: '3px solid #8b7355',
+                    padding: '6px 10px', borderRadius: '0 4px 4px 0',
+                    marginBottom: 10, fontSize: '0.78rem', fontWeight: 500,
+                    color: '#4a3728', lineHeight: 1.5
+                }}>
+                    {headerInfo}
+                </div>
+            )}
             {prog && (
                 <>
                     <h2 className="section-title">程序分析</h2>
