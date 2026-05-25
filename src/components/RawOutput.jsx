@@ -3,17 +3,17 @@ import { useECG } from '../lib/ECGContext';
 
 const CATEGORY_STYLES = {
     '推理': { color: '#e0c878', label: '推理', icon: '\u{1F9E0}' },
+    '输出': { color: '#abb2bf', label: '输出', icon: '\u{1F4AC}' },
     '工具': { color: '#98c379', label: '工具', icon: '\u{1F527}' },
     '状态': { color: '#7eb8da', label: '状态', icon: '\u{1F4CB}' },
     '错误': { color: '#e06c75', label: '错误', icon: '\u2717' },
     '警告': { color: '#e5c07b', label: '警告', icon: '\u26A0' },
-    '修正': { color: '#c678dd', label: '修正', icon: '\u{1F504}' },
 };
 
 function parseWithCategories(raw) {
     if (!raw) return [];
     const segments = [];
-    const re = /\[(\/)?(推理|工具|状态|错误|警告|修正)\]/g;
+    const re = /\[(\/)?(推理|输出|工具|状态|错误|警告)\]/g;
     let lastIdx = 0;
     let currentCat = null;
     let catStart = -1;

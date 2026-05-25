@@ -193,7 +193,6 @@ export function ECGProvider({ children }) {
         let roundErrors = [];
         let currentTokenUsage = null;
         let currentIteration = 0;
-        let correctionLog = [];
 
         try {
             roundErrors = [];
@@ -316,17 +315,6 @@ export function ECGProvider({ children }) {
                             pythonOutput = (pythonOutput || '') + '\n[Python stderr]\n' + executorRef.lastPythonOutput.stderr;
                         }
                     }
-                    if (analysisFeedback && executorRef.isComplete && executorRef.programmaticAnalysis) {
-                        const abns = executorRef.programmaticAnalysis.findings.filter(
-                            f => f.severity === 'abnormal' || f.severity === 'critical'
-                        );
-                        correctionLog.push({
-                            round: currentIteration,
-                            conclusion: executorRef.programmaticAnalysis.conclusion,
-                            findings: abns.map(f => f.text),
-                            rhythmIssues: rhythm?.issues || [],
-                        });
-                    }
                     return {
                         complete: executorRef.isComplete,
                         remaining: executorRef.getRemainingTasks(),
@@ -370,29 +358,6 @@ export function ECGProvider({ children }) {
                 dispatch({ type: 'SET_AI_LEAD_DESCRIPTIONS', payload: executorRef.aiLeadDescriptions });
             }
             addToast('心电图生成完成', 'success');
-
-            if (correctionLog.length > 0) {
-                const lines = ['\n---', '[修正] 修正摘要'];
-                for (const c of correctionLog) {
-                    const items = [...c.findings];
-                    if (items.length) {
-                        lines.push(`[修正] 轮${c.round}: ${c.conclusion} | ${items.join('；')}`);
-                    } else {
-                        lines.push(`[修正] 轮${c.round}: ${c.conclusion}`);
-                    }
-                }
-                const final = executorRef.programmaticAnalysis;
-                if (final) {
-                    const remAbns = final.findings.filter(f => f.severity === 'abnormal' || f.severity === 'critical');
-                    if (remAbns.length) {
-                        lines.push(`[修正] 最终: ${final.conclusion} | 残余: ${remAbns.map(f => f.text).join('；')}`);
-                    } else {
-                        lines.push(`[修正] 最终: ${final.conclusion}`);
-                    }
-                }
-                lines.push('---');
-                dispatch({ type: 'APPEND_REASONING', payload: lines.join('\n'), category: '修正' });
-            }
 
             const historyRecord = {
                 id: autoSaveIdRef.current,
