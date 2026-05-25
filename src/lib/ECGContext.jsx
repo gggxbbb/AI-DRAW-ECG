@@ -185,6 +185,8 @@ export function ECGProvider({ children }) {
                 (text, type) => {
                     if (type === 'reasoning') {
                         dispatch({ type: 'APPEND_REASONING', payload: text, category: '推理' });
+                    } else if (type === 'content') {
+                        dispatch({ type: 'APPEND_REASONING', payload: text, category: '输出' });
                     }
                 },
                 (toolCall, idx, round) => {
@@ -289,7 +291,7 @@ export function ECGProvider({ children }) {
                         };
                     }
                 },
-                state.aiConfig.reasoningEffort === 'off' ? 'none' : (state.aiConfig.reasoningEffort || undefined)
+                state.aiConfig.reasoningEffort || undefined
             );
 
             if (genResult && genResult.aborted) {

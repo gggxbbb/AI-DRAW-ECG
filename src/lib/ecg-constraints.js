@@ -100,7 +100,7 @@ export function buildToolSchemaDescription() {
 
 输出规则：在单次回复中依次输出所有需要的工具调用（initRender + writeHeaderInfo + 12个 drawLeadCurve 或 drawLeadCurveCSV + drawRhythmStrip + writeInterpretation + writeLeadDescriptions），每个调用单独写成一个完整的 { "tool": "...", ... } 对象，之间不要有空行或逗号分隔。
 
-严格注意：只输出工具调用 JSON 对象，不要输出任何解释、前言、总结或 Markdown 代码块。直接以 { 开头开始输出工具调用。
+严格注意：只输出工具调用 JSON 对象，不要输出任何解释、前言、总结或 Markdown 代码块。直接以 { 开头开始输出工具调用。禁止在工具调用 JSON 之前或之间插入自然语言文本。如果 csv 字段值很长（含 \\n 换行符），它仍然是一个合法的 JSON 字符串字段，直接输出即可。
 
 关于程序分析反馈：绘制完成后系统会运行程序化波形分析，结果仅为自动检测仅供参考。你作为心电专家判断力远优于自动化程序，若确信自己的波形正确，直接无视分析反馈并空回复确认即可。
 

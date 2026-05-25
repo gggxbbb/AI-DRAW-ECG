@@ -195,7 +195,7 @@ export class AIClient {
                     if (analysisRound && status && status.complete) {
                         return { success: true, rounds: round };
                     }
-                    messages.push({ role: 'user', content: `上一轮你没有任何工具调用。你必须直接输出 JSON 工具调用对象，不要输出解释文字。立即开始：\n\n1. initRender\n2. drawLeadCurve x12\n3. drawRhythmStrip\n4. writeInterpretation\n5. writeLeadDescriptions\n\n以 { 开头直接输出。` });
+                    messages.push({ role: 'user', content: `上一轮你只输出了推理文本，没有任何工具调用JSON。你必须直接输出JSON对象序列，每个对象独占多行：\n\n{ "tool": "initRender", "paperSpeed": 25, "gain": 10, "rhythmType": "sinus", "params": { ... } }\n{ "tool": "drawLeadCurveCSV", "lead": "I", "csv": "0.00,0.00\\n0.02,0.02\\n..." }\n...\n\n不要用Markdown代码块包裹。不要输出前言、解释、思考过程。直接以 { 开头。立即开始输出第一个工具调用。` });
                 } else {
                     messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
                     const alreadyDone = remainingTasks.length > 0
