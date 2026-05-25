@@ -252,7 +252,18 @@ export class ECGAnalyzer {
         for (let i = stStart; i <= stEnd; i++) { stSum += vals[i] - baselineMv; stCount++; }
         const stMv = stCount > 0 ? stSum / stCount : 0;
 
-        return { rAmp, stMv, baselineMv, hasQWave, tInverted, tAvg: tMv - baselineMv };
+        return { rAmp, rIdx, rTime: times[rIdx], stMv, stMeasureTime: jIdx >= 0 ? times[jIdx] + 0.06 : 0, baselineMv, hasQWave, qIdx: minIdx >= 0 && (qDepth > 0.2 || qWidthMs >= 80) ? minIdx : -1, sIdx: sIdx > rIdx ? sIdx : -1, jIdx: jIdx >= 0 ? jIdx : -1, tPeakIdx: tPeakIdx >= 0 ? tPeakIdx : -1, tInverted, tAvg: tMv - baselineMv, vals, times };
+    }
+
+    getLeadAnnotations(curves, params) {
+        const result = {};
+        for (const [lead, points] of Object.entries(curves)) {
+            if (!points || points.length < 10) continue;
+            const a = this._analyzeLeadCurve(points);
+            if (!a) continue;
+            result[lead] = a;
+        }
+        return result;
     }
 
     _bazett(qt, hr) { return Math.round(qt / Math.sqrt(60 / hr)); }

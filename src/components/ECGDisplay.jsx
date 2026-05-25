@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useECG } from '../lib/ECGContext';
 import { ECGRenderer } from '../lib/ecg-renderer';
+import { ecgAnalyzer } from '../lib/ecg-analyzer';
 
 export default function ECGDisplay() {
     const canvasRef = useRef(null);
@@ -53,6 +54,13 @@ export default function ECGDisplay() {
         renderer.setGain(displayConfig.gain);
         renderer.setGrid(displayConfig.showGrid);
         renderer.setLabels(displayConfig.showLabels);
+        renderer.setAnnotations(displayConfig.showAnnotations);
+        if (displayConfig.showAnnotations && renderer._leadCurves) {
+            const curves = renderer._leadCurves;
+            if (Object.keys(curves).length >= 3) {
+                renderer.setAnnotationData(ecgAnalyzer.getLeadAnnotations(curves, currentParams));
+            }
+        }
         renderer.render(currentParams);
     }, [displayConfig]);
 

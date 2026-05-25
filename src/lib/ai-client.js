@@ -149,6 +149,7 @@ export class AIClient {
         const maxIterations = 80;
         let correctionRounds = 0;
         const maxCorrections = 2;
+        let feedbackPending = false;
 
         while (iteration < maxIterations) {
             iteration++;
@@ -206,12 +207,14 @@ export class AIClient {
                 }
 
                 onProgress({ type: 'iterationDone', iteration, toolCount: totalTools });
+                feedbackPending = false;
 
                 const status = onProgress({ type: 'getStatus' });
                 if (status && !status.complete) continue;
 
                 if (status?.analysisFeedback && correctionRounds < maxCorrections) {
                     correctionRounds++;
+                    feedbackPending = true;
                     messages.push({
                         role: 'user',
                         content: `所有工具已完成，程序自动分析结果如下（仅供参考，纯属自动化检测，无法替代临床判断）：\n\n${status.analysisFeedback}\n\n程序分析可能将你刻意绘制的病理性改变误报为"异常"。如果你确信这些波形正确反映了病情，无需操作，直接停止。仅当你认为波形确实画错了（与病情不符）时才修正：直接使用 drawLeadCurve 或 drawLeadCurveCSV 重绘对应导联（画布已就绪，无需 initRender）。`,
@@ -232,8 +235,13 @@ export class AIClient {
 
             const status = onProgress({ type: 'getStatus' });
 
+            if (feedbackPending && status?.analysisFeedback) {
+                return { success: true, iterations: iteration };
+            }
+
             if (status?.analysisFeedback && correctionRounds < maxCorrections && status.complete) {
                 correctionRounds++;
+                feedbackPending = true;
                 if (result.content || result.reasoning) {
                     const am = { role: 'assistant', content: result.content || null };
                     if (result.reasoning) am.reasoning_content = result.reasoning;

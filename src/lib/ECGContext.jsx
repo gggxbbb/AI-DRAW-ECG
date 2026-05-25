@@ -10,7 +10,7 @@ const ECGContext = createContext(null);
 
 const initialState = {
     aiConfig: { endpoint: '', token: '', model: 'gpt-4o', temperature: 0.3, reasoningEffort: '' },
-    displayConfig: { paperSpeed: 25, gain: 10, showGrid: true, showLabels: true },
+    displayConfig: { paperSpeed: 25, gain: 10, showGrid: true, showLabels: true, showAnnotations: false },
     currentParams: null,
     interpretation: null,
     aiInterpretation: null,
@@ -142,6 +142,7 @@ export function ECGProvider({ children }) {
         renderer.setGain(record.displayConfig.gain);
         renderer.setGrid(record.displayConfig.showGrid);
         renderer.setLabels(record.displayConfig.showLabels);
+        renderer.setAnnotations(record.displayConfig.showAnnotations);
 
         renderer.renderInit(record.currentParams, { keepCurves: true });
         renderer.restoreCurves(record.leadCurves);
@@ -185,6 +186,8 @@ export function ECGProvider({ children }) {
         renderer.setGain(state.displayConfig.gain);
         renderer.setGrid(state.displayConfig.showGrid);
         renderer.setLabels(state.displayConfig.showLabels);
+        renderer.setAnnotations(false);
+        renderer.setAnnotationData(null);
 
         let totalLeads = 0;
         let roundErrors = [];

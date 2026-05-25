@@ -21,6 +21,10 @@ export default function DisplayOptionsSection() {
                     <input type="checkbox" checked={displayConfig.showLabels}
                         onChange={e => updateDisplay('showLabels', e.target.checked)} /> 标注
                 </label>
+                <label className="checkbox-label">
+                    <input type="checkbox" checked={displayConfig.showAnnotations}
+                        onChange={e => updateDisplay('showAnnotations', e.target.checked)} /> 特征标记
+                </label>
             </div>
         </section>
     );

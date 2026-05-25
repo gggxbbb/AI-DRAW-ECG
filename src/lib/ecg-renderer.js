@@ -6,6 +6,7 @@ export class ECGRenderer {
         this.gain = 10;
         this.showGrid = true;
         this.showLabels = true;
+        this.showAnnotations = false;
         this.zoomLevel = 1.0;
         this.params = null;
         this.dpr = window.devicePixelRatio || 1;
@@ -203,6 +204,9 @@ export class ECGRenderer {
     render(params) {
         this.renderInit(params, { keepCurves: true });
         this._redrawStoredCurves(params);
+        if (this.showAnnotations && this._annotationData) {
+            this.drawAnnotations(this._annotationData, params);
+        }
         this._notifyInterpretation(params);
         return params;
     }
@@ -245,6 +249,149 @@ export class ECGRenderer {
                 this._rhythmDuration,
             );
         }
+    }
+
+    drawAnnotations(annotations, params) {
+        if (!this._leadPanels || !this._layout) return;
+        const dur = this._leadDuration;
+        for (const p of this._leadPanels) {
+            const a = annotations[p.lead];
+            if (!a || !a.times) continue;
+            this._drawLeadAnnotations(p.x, p.y, p.w, p.h, a, dur);
+        }
+        const rA = annotations['II'];
+        if (rA && rA.times && this._rhythmPanel) {
+            this._drawLeadAnnotations(
+                this._rhythmPanel.x, this._rhythmPanel.y,
+                this._rhythmPanel.w, this._rhythmPanel.h,
+                rA, this._rhythmDuration
+            );
+        }
+    }
+
+    _drawLeadAnnotations(rx, ry, rw, rh, a, duration) {
+        const ctx = this.ctx;
+        const bl = ry + rh * 0.5;
+        const baselinePx = bl - this.mvToPx(a.baselineMv);
+
+        const timeToX = (t) => rx + (t / duration) * rw;
+        const mvToY = (mv) => bl - this.mvToPx(mv - a.baselineMv);
+
+        ctx.save();
+        ctx.lineWidth = 0.8;
+        ctx.font = `${7.5 * this.zoomLevel}px "Segoe UI", sans-serif`;
+        ctx.textBaseline = 'bottom';
+
+        // baseline dashed
+        ctx.strokeStyle = 'rgba(100,160,220,0.35)';
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.moveTo(rx + 2, baselinePx); ctx.lineTo(rx + rw - 2, baselinePx);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // R peak
+        if (a.rIdx >= 0 && a.rTime != null) {
+            const rxR = timeToX(a.rTime);
+            if (rxR >= rx && rxR <= rx + rw) {
+                ctx.strokeStyle = '#2c7a4a';
+                ctx.setLineDash([1.5, 2]);
+                ctx.beginPath();
+                ctx.moveTo(rxR, ry + 2); ctx.lineTo(rxR, ry + rh - 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.fillStyle = '#2c7a4a';
+                ctx.textAlign = 'center';
+                ctx.fillText('R', rxR, ry + 2);
+            }
+        }
+
+        // J point
+        if (a.jIdx >= 0 && a.jIdx < a.times.length) {
+            const jt = a.times[a.jIdx];
+            const xj = timeToX(jt);
+            const yj = mvToY(a.vals[a.jIdx]);
+            if (xj >= rx && xj <= rx + rw) {
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath();
+                ctx.arc(xj, yj, 2.5 * this.zoomLevel, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.textAlign = 'left';
+                ctx.fillText('J', xj + 3, yj - 3);
+            }
+        }
+
+        // T peak
+        if (a.tPeakIdx >= 0 && a.tPeakIdx < a.times.length) {
+            const tt = a.times[a.tPeakIdx];
+            const xt = timeToX(tt);
+            const yt = mvToY(a.vals[a.tPeakIdx]);
+            if (xt >= rx && xt <= rx + rw) {
+                ctx.fillStyle = '#8e44ad';
+                ctx.beginPath();
+                ctx.arc(xt, yt, 2.5 * this.zoomLevel, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.textAlign = 'left';
+                const label = a.tInverted ? 'T↓' : 'T';
+                ctx.fillText(label, xt + 3, yt + (a.tInverted ? -8 : -3));
+            }
+        }
+
+        // Q wave marker
+        if (a.qIdx >= 0 && a.qIdx < a.times.length) {
+            const tq = a.times[a.qIdx];
+            const xq = timeToX(tq);
+            const yq = mvToY(a.vals[a.qIdx]);
+            if (xq >= rx && xq <= rx + rw) {
+                ctx.fillStyle = '#d35400';
+                ctx.beginPath();
+                ctx.arc(xq, yq, 2 * this.zoomLevel, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.textAlign = 'right';
+                ctx.fillText('Q', xq - 3, yq - 3);
+            }
+        }
+
+        // S wave marker  
+        if (a.sIdx >= 0 && a.sIdx < a.times.length) {
+            const ts = a.times[a.sIdx];
+            const xs = timeToX(ts);
+            const ys = mvToY(a.vals[a.sIdx]);
+            if (xs >= rx && xs <= rx + rw) {
+                ctx.fillStyle = '#d35400';
+                ctx.beginPath();
+                ctx.arc(xs, ys, 2 * this.zoomLevel, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.textAlign = 'right';
+                ctx.fillText('S', xs - 3, ys + 12);
+            }
+        }
+
+        // ST segment bracket
+        if (a.jIdx >= 0 && a.stMeasureTime > 0) {
+            const xJ = timeToX(a.times[a.jIdx]);
+            const xST = timeToX(a.stMeasureTime);
+            if (xJ >= rx && xST <= rx + rw) {
+                const yST = mvToY(a.stMv + a.baselineMv);
+                ctx.strokeStyle = '#c0392b';
+                ctx.lineWidth = 1.4;
+                ctx.beginPath();
+                ctx.moveTo(xJ + 2, yST);
+                ctx.lineTo(xST - 2, yST);
+                ctx.stroke();
+                ctx.lineWidth = 0.8;
+                const stMm = Math.round(a.stMv * 10);
+                const arrowY = stMm >= 0 ? Math.max(yST - 6, ry + 4) : Math.min(yST + 6, ry + rh - 4);
+                ctx.beginPath();
+                ctx.moveTo(xST, yST); ctx.lineTo(xST, arrowY);
+                ctx.stroke();
+                ctx.fillStyle = '#c0392b';
+                ctx.textAlign = 'left';
+                ctx.fillText(`ST ${stMm >= 0 ? '+' : ''}${stMm}mm`, xST + 2, arrowY + (stMm >= 0 ? -1 : 10));
+            }
+        }
+
+        ctx.restore();
     }
 
     renderLeadCurve(lead, toolCall, params) {
@@ -388,6 +535,8 @@ export class ECGRenderer {
     setGain(g) { this.gain = g; }
     setGrid(v) { this.showGrid = v; }
     setLabels(v) { this.showLabels = v; }
+    setAnnotations(v) { this.showAnnotations = v; }
+    setAnnotationData(data) { this._annotationData = data; }
 
     adjustZoom(delta) {
         this._autoFit = false;
