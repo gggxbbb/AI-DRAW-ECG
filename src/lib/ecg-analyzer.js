@@ -1,5 +1,8 @@
+const CHEST_LEADS = ['V1', 'V2', 'V3', 'V4', 'V5', 'V6'];
+const LIMB_LEADS = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF'];
 const INFERIOR_LEADS = ['II', 'III', 'aVF'];
-const ANTERIOR_LEADS = ['V1', 'V2', 'V3', 'V4'];
+const SEPTAL_LEADS = ['V1', 'V2'];
+const ANTERIOR_LEADS = ['V3', 'V4'];
 const LATERAL_LEADS = ['I', 'aVL', 'V5', 'V6'];
 
 export class ECGAnalyzer {
@@ -38,25 +41,36 @@ export class ECGAnalyzer {
             for (const [lead, a] of Object.entries(leadAnalysis)) {
                 if (!a) continue;
                 const stMm = Math.round(a.stMv * 10);
-                if (stMm >= 1) stElevated.push(`${lead}(${stMm}mm)`);
+                const isChestLead = CHEST_LEADS.includes(lead);
+                const stElevThreshold = isChestLead ? 2 : 1;
+                if (stMm >= stElevThreshold) stElevated.push(`${lead}(${stMm}mm)`);
                 if (stMm <= -1 && a.stMv < 0) stDepressed.push(`${lead}(${Math.abs(stMm)}mm)`);
                 if (a.tInverted) tInverted.push(lead);
-                if (a.hasQWave) qWaves.push(lead);
+                if (a.hasQWave && lead !== 'III') qWaves.push(lead);
             }
 
             if (stElevated.length > 0) {
-                const infMatch = INFERIOR_LEADS.filter(l => leadAnalysis[l] && leadAnalysis[l].stMv >= 0.1);
-                const antMatch = ANTERIOR_LEADS.filter(l => leadAnalysis[l] && leadAnalysis[l].stMv >= 0.1);
-                const latMatch = LATERAL_LEADS.filter(l => leadAnalysis[l] && leadAnalysis[l].stMv >= 0.1);
+                const isLeadElevated = (l) => {
+                    const a = leadAnalysis[l];
+                    if (!a) return false;
+                    const threshold = CHEST_LEADS.includes(l) ? 0.2 : 0.1;
+                    return a.stMv >= threshold;
+                };
+                const infMatch = INFERIOR_LEADS.filter(isLeadElevated);
+                const antMatch = ANTERIOR_LEADS.filter(isLeadElevated);
+                const sepMatch = SEPTAL_LEADS.filter(isLeadElevated);
+                const latMatch = LATERAL_LEADS.filter(isLeadElevated);
 
                 if (infMatch.length >= 2) {
                     findings.push({ text: `下壁导联 ST 段抬高 (${infMatch.join(',')})`, severity: 'abnormal' });
                     if (leadAnalysis['III'] && leadAnalysis['II'] &&
                         leadAnalysis['III'].stMv > leadAnalysis['II'].stMv) {
-                        findings.push({ text: `III导联 ST 抬高 > II导联`, severity: 'abnormal' });
+                        findings.push({ text: 'III导联 ST 抬高 > II导联', severity: 'abnormal' });
                     }
                 } else if (antMatch.length >= 2) {
                     findings.push({ text: `前壁导联 ST 段抬高 (${antMatch.join(',')})`, severity: 'abnormal' });
+                } else if (sepMatch.length >= 2) {
+                    findings.push({ text: `间隔导联 ST 段抬高 (${sepMatch.join(',')})`, severity: 'abnormal' });
                 } else if (latMatch.length >= 2) {
                     findings.push({ text: `侧壁导联 ST 段抬高 (${latMatch.join(',')})`, severity: 'abnormal' });
                 } else {
@@ -81,10 +95,11 @@ export class ECGAnalyzer {
                 findings.push({ text: `ST 段压低 (${stDepressed.join(',')})`, severity: 'abnormal' });
             }
 
-            if (tInverted.length >= 3) {
-                findings.push({ text: `广泛导联 T 波倒置 (${tInverted.join(',')})`, severity: 'abnormal' });
-            } else if (tInverted.length > 0) {
-                findings.push({ text: `T 波倒置 (${tInverted.join(',')})`, severity: 'abnormal' });
+            const tInvClinSignificant = tInverted.filter(l => l !== 'aVR' && l !== 'V1' && l !== 'III');
+            if (tInvClinSignificant.length >= 3) {
+                findings.push({ text: `广泛导联 T 波倒置 (${tInvClinSignificant.join(',')})`, severity: 'abnormal' });
+            } else if (tInvClinSignificant.length > 0) {
+                findings.push({ text: `T 波倒置 (${tInvClinSignificant.join(',')})`, severity: 'abnormal' });
             }
 
             if (qWaves.length >= 2) {
@@ -174,21 +189,28 @@ export class ECGAnalyzer {
         const rAmp = maxMv;
         const rIdx = maxIdx;
 
+        const sampleDt = n >= 2 ? points[1][0] - points[0][0] : 0.002;
+        const qWindowPts = Math.max(3, Math.ceil(0.04 / Math.max(sampleDt, 0.0005)));
         let minMv = Infinity, minIdx = -1;
-        for (let i = 0; i < rIdx; i++) {
+        const qWindow = Math.max(0, rIdx - qWindowPts);
+        for (let i = qWindow; i < rIdx; i++) {
             if (vals[i] < minMv) { minMv = vals[i]; minIdx = i; }
         }
         const qDepth = minIdx >= 0 ? Math.abs(minMv) : 0;
-        const hasQWave = minIdx >= 0 && qDepth > 0.2 && qDepth > rAmp * 0.25;
+        const qWidthMs = minIdx > 0 && minIdx < rIdx - 1 ? (points[rIdx - 1][0] - points[minIdx][0]) * 1000 : 0;
+        const hasQWave = minIdx >= 0 && (rIdx - minIdx > 1) &&
+            (qDepth > 0.2 && qDepth > rAmp * 0.33) || (qWidthMs >= 80 && qDepth > 0.1);
 
-        const prEnd = Math.max(1, Math.floor(rIdx * 0.35));
+        const blStart = Math.max(1, Math.floor(rIdx * 0.25));
+        const blEnd = Math.floor(rIdx * 0.45);
         let blSum = 0, blCount = 0;
-        for (let i = 0; i < prEnd; i++) { blSum += vals[i]; blCount++; }
+        for (let i = blStart; i < blEnd && i < n; i++) { blSum += vals[i]; blCount++; }
         const baselineMv = blCount > 0 ? blSum / blCount : 0;
 
+        const sWindowPts = Math.max(5, Math.ceil(0.06 / Math.max(sampleDt, 0.0005)));
         let sIdx = rIdx;
         let sMin = vals[rIdx];
-        for (let i = rIdx + 1; i < Math.min(rIdx + 15, n); i++) {
+        for (let i = rIdx + 1; i < Math.min(rIdx + sWindowPts, n); i++) {
             if (vals[i] < sMin) { sMin = vals[i]; sIdx = i; }
         }
 
