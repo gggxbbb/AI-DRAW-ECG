@@ -16,6 +16,7 @@ export class ECGRenderer {
         this.GRID_SQUARES_H = 4;
         this.RHYTHM_SQUARES_H = 4;
         this.HEADER_ROWS = 3;
+        this.FOOTER_ROWS = 3;
         this.LEAD_COLS = 4;
         this.LEAD_ROWS = 3;
         this.leadOrder = [
@@ -51,7 +52,7 @@ export class ECGRenderer {
 
         if (this._autoFit !== false) {
             const tw = this.GRID_SQUARES_W * 5 * this.LEAD_COLS;
-            const th = (this.HEADER_ROWS + this.GRID_SQUARES_H * this.LEAD_ROWS + this.RHYTHM_SQUARES_H) * 5;
+            const th = (this.HEADER_ROWS + this.GRID_SQUARES_H * this.LEAD_ROWS + this.RHYTHM_SQUARES_H + this.FOOTER_ROWS) * 5;
             const bpm = 3.78;
             this.zoomLevel = Math.min((this.displayWidth - 4) / (tw * bpm), (this.displayHeight - 4) / (th * bpm), 3);
         }
@@ -62,20 +63,22 @@ export class ECGRenderer {
         const lh = this.mmToPx(this.GRID_SQUARES_H * 5);
         const rh = this.mmToPx(this.RHYTHM_SQUARES_H * 5);
         const hh = this.mmToPx(this.HEADER_ROWS * 5);
+        const fh = this.mmToPx(this.FOOTER_ROWS * 5);
         const tw = lw * this.LEAD_COLS;
-        const th = hh + lh * this.LEAD_ROWS + rh;
+        const th = hh + lh * this.LEAD_ROWS + rh + fh;
         return {
-            leadW: lw, leadH: lh, rhythmH: rh, headerH: hh,
+            leadW: lw, leadH: lh, rhythmH: rh, headerH: hh, footerH: fh,
             offsetX: Math.round((this.displayWidth - tw) / 2),
             offsetY: Math.round((this.displayHeight - th) / 2),
             totalW: tw, totalH: th,
         };
     }
 
-    drawFullGrid(ox, oy, tw, th, hh) {
+    drawFullGrid(ox, oy, tw, th, hh, fh) {
         const ctx = this.ctx;
         const gridTop = oy + (hh || 0);
-        const gridTotalH = th - (hh || 0);
+        const gridBottom = oy + th - (fh || 0);
+        const gridTotalH = gridBottom - gridTop;
         ctx.fillStyle = this.colors.background;
         ctx.fillRect(ox, oy, tw, th);
         if (!this.showGrid) return;
@@ -83,13 +86,14 @@ export class ECGRenderer {
         const l = this.mmToPx(5);
         const R = ox + tw, B = oy + th;
         const top = gridTop;
+        const bottom = gridBottom;
         ctx.strokeStyle = this.colors.gridMinor; ctx.lineWidth = 0.3; ctx.beginPath();
-        for (let x = ox; x <= R; x += s) { ctx.moveTo(x, top); ctx.lineTo(x, B); }
-        for (let y = top; y <= B; y += s) { ctx.moveTo(ox, y); ctx.lineTo(R, y); }
+        for (let x = ox; x <= R; x += s) { ctx.moveTo(x, top); ctx.lineTo(x, bottom); }
+        for (let y = top; y <= bottom; y += s) { ctx.moveTo(ox, y); ctx.lineTo(R, y); }
         ctx.stroke();
         ctx.strokeStyle = this.colors.gridMajor; ctx.lineWidth = 0.6; ctx.beginPath();
-        for (let x = ox; x <= R; x += l) { ctx.moveTo(x, top); ctx.lineTo(x, B); }
-        for (let y = top; y <= B; y += l) { ctx.moveTo(ox, y); ctx.lineTo(R, y); }
+        for (let x = ox; x <= R; x += l) { ctx.moveTo(x, top); ctx.lineTo(x, bottom); }
+        for (let y = top; y <= bottom; y += l) { ctx.moveTo(ox, y); ctx.lineTo(R, y); }
         ctx.stroke();
         if (hh && hh > 0) {
             ctx.strokeStyle = this.colors.gridMinor; ctx.lineWidth = 0.3; ctx.beginPath();
@@ -104,6 +108,21 @@ export class ECGRenderer {
             const line2 = oy + hh * 0.66;
             ctx.moveTo(ox, line1); ctx.lineTo(R, line1);
             ctx.moveTo(ox, line2); ctx.lineTo(R, line2);
+            ctx.stroke();
+        }
+        if (fh && fh > 0) {
+            ctx.strokeStyle = this.colors.gridMinor; ctx.lineWidth = 0.3; ctx.beginPath();
+            for (let x = ox; x <= R; x += s) { ctx.moveTo(x, gridBottom); ctx.lineTo(x, B); }
+            for (let y = gridBottom; y <= B; y += s) { ctx.moveTo(ox, y); ctx.lineTo(R, y); }
+            ctx.stroke();
+            const l3 = this.mmToPx(5);
+            ctx.strokeStyle = this.colors.gridMajor; ctx.lineWidth = 0.6; ctx.beginPath();
+            for (let x = ox; x <= R; x += l3) { ctx.moveTo(x, gridBottom); ctx.lineTo(x, B); }
+            ctx.moveTo(ox, gridBottom); ctx.lineTo(R, gridBottom);
+            const fline1 = gridBottom + fh * 0.33;
+            const fline2 = gridBottom + fh * 0.66;
+            ctx.moveTo(ox, fline1); ctx.lineTo(R, fline1);
+            ctx.moveTo(ox, fline2); ctx.lineTo(R, fline2);
             ctx.stroke();
         }
     }
@@ -163,7 +182,7 @@ export class ECGRenderer {
         ctx.fillRect(0, 0, this.displayWidth, this.displayHeight);
 
         const L = this.calcLayout();
-        this.drawFullGrid(L.offsetX, L.offsetY, L.totalW, L.totalH, L.headerH);
+        this.drawFullGrid(L.offsetX, L.offsetY, L.totalW, L.totalH, L.headerH, L.footerH);
         this._layout = L;
         this._drawWatermark();
         this._leadDuration = 2.5;
