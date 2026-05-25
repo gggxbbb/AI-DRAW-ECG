@@ -28,8 +28,8 @@ export default function InterpretationSection() {
                     <h2 className="section-title">程序分析</h2>
                     <div className="interpretation-box">
                         <div className="interpret-tag" style={{
-                            background: prog.conclusion.includes('危急') ? '#e74c3c' :
-                                        prog.conclusion.includes('异常') ? '#e67e22' : '#27ae60',
+                            background: prog.conclusion.includes('多项') ? '#e74c3c' :
+                                        prog.conclusion.includes('部分') || prog.conclusion.includes('边界') ? '#e67e22' : '#27ae60',
                             color: '#fff', padding: '2px 8px', borderRadius: 3,
                             display: 'inline-block', fontSize: '0.75rem', fontWeight: 600, marginBottom: 4
                         }}>

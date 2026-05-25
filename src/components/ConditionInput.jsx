@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useECG } from '../lib/ECGContext';
 
 export default function ConditionInput() {
-    const { state, handleGenerateStream, addToast } = useECG();
+    const { state, handleGenerateStream, handleStopGeneration, addToast } = useECG();
     const [condition, setCondition] = useState('');
     const [additional, setAdditional] = useState('');
     const { isGenerating, aiConfig, progressBar, progressPhase, streamProgress } = state;
@@ -34,18 +34,33 @@ export default function ConditionInput() {
                     value={additional}
                     onChange={e => setAdditional(e.target.value)} />
             </div>
-            <button type="button" className="btn btn-primary" id="generateBtn"
-                onClick={handleGenerateClick}
-                disabled={isGenerating}>
-                {isGenerating ? (
-                    <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
-                        <span><span className="spinner"></span> AI 生成中...</span>
-                        {progressBar && <span style={{fontFamily:'monospace',fontSize:'0.68rem',opacity:0.85}}>{progressBar}{streamProgress ? ` (${streamProgress})` : ''}</span>}
-                    </div>
-                ) : (
-                    <>&#9889; 生成心电图</>
+            <div style={{display:'flex', gap:6}}>
+                <button type="button" className="btn btn-primary" id="generateBtn"
+                    onClick={handleGenerateClick}
+                    disabled={isGenerating}
+                    style={{flex:1}}>
+                    {isGenerating ? (
+                        <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
+                            <span><span className="spinner"></span> AI 生成中...</span>
+                            {progressBar && <span style={{fontFamily:'monospace',fontSize:'0.68rem',opacity:0.85}}>{progressBar}{streamProgress ? ` (${streamProgress})` : ''}</span>}
+                        </div>
+                    ) : (
+                        <>&#9889; 生成心电图</>
+                    )}
+                </button>
+                {isGenerating && (
+                    <button type="button"
+                        onClick={handleStopGeneration}
+                        style={{
+                            padding: '0 14px', background: '#e74c3c', color: '#fff',
+                            border: 'none', borderRadius: 6, cursor: 'pointer',
+                            fontSize: '0.8rem', fontWeight: 600,
+                            whiteSpace: 'nowrap'
+                        }}>
+                        &#9632; 停止
+                    </button>
                 )}
-            </button>
+            </div>
         </section>
     );
 }

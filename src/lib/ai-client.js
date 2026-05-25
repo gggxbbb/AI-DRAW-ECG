@@ -8,6 +8,7 @@ export class AIClient {
         this.model = 'gpt-4o';
         this.temperature = 0.3;
         this.maxTokens = 8192;
+        this._abortController = null;
     }
 
     configure(endpoint, token, model, temperature = 0.3) {
@@ -31,14 +32,23 @@ export class AIClient {
         } catch (err) { throw new Error(`连接失败: ${err.message}`); }
     }
 
+    abort() {
+        if (this._abortController) {
+            this._abortController.abort();
+            this._abortController = null;
+        }
+    }
+
     async streamCall(messages, onReasoning, onToolCall, reasoningEffort) {
         if (!this.endpoint || !this.token) throw new Error('请先配置API Endpoint和Token');
 
+        this._abortController = new AbortController();
         const body = { model: this.model, messages, max_tokens: this.maxTokens, temperature: this.temperature, stream: true };
         if (reasoningEffort) body.reasoning_effort = reasoningEffort;
 
         const resp = await fetch(this.endpoint, {
             method: 'POST',
+            signal: this._abortController.signal,
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
             body: JSON.stringify(body),
         });
@@ -51,6 +61,7 @@ export class AIClient {
         const decoder = new TextDecoder();
         let buffer = '';
         let toolIndex = 0;
+        let usage = null;
 
         while (true) {
             const { done, value } = await reader.read();
@@ -63,6 +74,7 @@ export class AIClient {
                 if (data === '[DONE]') break;
                 try {
                     const parsed = JSON.parse(data);
+                    if (parsed.usage) usage = parsed.usage;
                     const delta = parsed.choices?.[0]?.delta;
                     if (!delta) continue;
 
@@ -101,7 +113,7 @@ export class AIClient {
                 } catch (e) {}
             }
         }
-        return toolIndex;
+        return { toolIndex, usage };
     }
 
     async generateMultiRound(condition, additionalParams, onReasoning, onToolCall, onProgress, reasoningEffort) {
@@ -114,6 +126,7 @@ export class AIClient {
         let remaining = null;
         let errors = [];
         let round = 0;
+        let analysisRound = false;
 
         while (round < 5) {
             round++;
@@ -121,39 +134,76 @@ export class AIClient {
 
             let totalTools = 0;
             const roundTools = [];
-            await this.streamCall(messages, onReasoning, (tool, idx) => {
-                totalTools++;
-                roundTools.push(tool);
-                onToolCall(tool, idx, round);
-            }, reasoningEffort);
+            let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+            try {
+                const result = await this.streamCall(messages, onReasoning, (tool, idx) => {
+                    totalTools++;
+                    roundTools.push(tool);
+                    onToolCall(tool, idx, round);
+                }, reasoningEffort);
+                if (result.usage) {
+                    totalUsage.prompt_tokens += result.usage.prompt_tokens || 0;
+                    totalUsage.completion_tokens += result.usage.completion_tokens || 0;
+                    totalUsage.total_tokens += result.usage.total_tokens || 0;
+                }
+                onProgress({ type: 'usage', ...totalUsage });
+            } catch (err) {
+                if (err && err.name === 'AbortError') return { success: false, rounds: round, aborted: true };
+                throw err;
+            }
 
             onProgress({ type: 'roundDone', round, count: totalTools });
 
             const status = onProgress({ type: 'getStatus' });
-            if (status && status.complete) return { success: true, rounds: round };
+            if (status && status.complete && !status.analysisFeedback) return { success: true, rounds: round };
 
             const remainingTasks = status ? status.remaining : [];
             const roundErrors = status ? status.errors : [];
+            const analysisFeedback = status ? status.analysisFeedback : null;
 
-            if (remainingTasks.length === 0) {
+            if (remainingTasks.length === 0 && !analysisFeedback) {
                 if (roundErrors.length > 0) {
-                    messages.push({ role: 'user', content: `以下工具调用失败:\n${roundErrors.join('\n')}\n仅重新生成失败的工具，不要重复其他内容。` });
+                    messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
+                    messages.push({ role: 'user', content: `以下工具调用失败:\n${roundErrors.join('\n')}\n仅重新生成失败的工具，不要重复已成功的其他工具。` });
                 } else {
                     return { success: true, rounds: round };
                 }
+            } else if (remainingTasks.length === 0 && analysisFeedback) {
+                if (analysisRound) {
+                    return { success: true, rounds: round };
+                }
+                analysisRound = true;
+                messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
+                messages.push({ role: 'user', content: `所有工具已完成，程序分析结果（仅供AI参考，确信正确可直接无视）：\n\n${analysisFeedback}\n\n如果以上结论与病情相符，空回复确认。仅当波形明显有误时才需修正重绘。` });
             } else {
+                const ctx = status?.context;
+                const isWritingOnly = remainingTasks.every(t =>
+                    t.includes('writeInterpretation') || t.includes('writeLeadDescriptions')
+                );
+                let contextNote = '';
+                if (isWritingOnly && ctx?.params) {
+                    const p = ctx.params;
+                    const rMap = {
+                        'sinus':'窦性心律','sinus_arrhythmia':'窦性心律不齐','atrial_fibrillation':'心房颤动',
+                        'atrial_flutter':'心房扑动','ventricular':'室性心动过速','paced':'心室起搏',
+                        'complete_heart_block':'III°AVB','ventricular_fibrillation':'心室颤动','torsades':'尖端扭转',
+                        'sinus_with_pvc':'窦性+室早','sinus_with_wenckebach':'II°I型AVB','sinus_with_mobitz2':'II°II型AVB',
+                    };
+                    contextNote = `\n\n心电图上下文：\n患者描述：${condition}\n心律：${rMap[p.rhythmType]||p.rhythmType} | 心率：${p.heartRate}bpm | QRS：${p.qrsDuration}ms | QT：${p.qtInterval}ms | 电轴：${p.qrsAxis}°\n已绘制：${ctx.leadsDone?.join(',')||'全部12导联'}\n标题：${ctx.headerInfo||'无'}\n\n请根据以上参数和已绘制的波形数据，为这幅心电图撰写临床解读和导联描述。`;
+                }
                 if (totalTools === 0) {
-                    messages = [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: `上一轮你没有任何工具调用。你必须直接输出 JSON 工具调用对象，每个对象一行，格式：{ "tool": "initRender", ... }\n\n立即输出：\n1. initRender\n2. drawLeadCurve x12\n3. drawRhythmStrip\n4. writeInterpretation\n5. writeLeadDescriptions\n\n只输出工具调用 JSON，不要输出解释文字。` },
-                    ];
+                    if (analysisRound && status && status.complete) {
+                        return { success: true, rounds: round };
+                    }
+                    messages.push({ role: 'user', content: `上一轮你没有任何工具调用。你必须直接输出 JSON 工具调用对象，不要输出解释文字。立即开始：\n\n1. initRender\n2. drawLeadCurve x12\n3. drawRhythmStrip\n4. writeInterpretation\n5. writeLeadDescriptions\n\n以 { 开头直接输出。` });
                 } else {
-                    messages = [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: `任务未完，仅输出缺失项：\n${remainingTasks.map(t => '□ ' + t).join('\n')}\n${
-                            roundErrors.length ? '\n错误:\n' + roundErrors.join('\n') + '\n仅重新生成失败的工具。' : ''
-                        }` },
-                    ];
+                    messages.push({ role: 'assistant', content: JSON.stringify(roundTools) });
+                    const alreadyDone = remainingTasks.length > 0
+                        ? `\n\n重要：已完成的任务（initRender、已绘制的导联）无需重复。只输出上方 ☐ 标记的缺失项，不要重新生成整个心电图。`
+                        : '';
+                    messages.push({ role: 'user', content: `任务未完，仅输出缺失项：\n${remainingTasks.map(t => '□ ' + t).join('\n')}${contextNote}${alreadyDone}\n${
+                        roundErrors.length ? '\n错误:\n' + roundErrors.join('\n') + '\n仅重新生成失败的工具。' : ''
+                    }` });
                 }
             }
         }

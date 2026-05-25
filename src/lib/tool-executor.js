@@ -13,6 +13,8 @@ export class ToolExecutor {
         this.aiInterpretation = null;
         this.aiLeadDescriptions = null;
         this.headerInfo = null;
+        this.programmaticAnalysis = null;
+        this.rhythmConsistency = null;
     }
 
     getRemainingTasks() {
@@ -37,7 +39,7 @@ export class ToolExecutor {
 
         switch (toolCall.tool) {
             case 'initRender': {
-                if (this.initDone) return { success: false, errors: ['initRender 已完成，无需重复调用'] };
+                if (this.initDone) this.redrawRound = true;
                 this.storedParams = {
                     heartRate: toolCall.params?.heartRate || 72,
                     qrsDuration: toolCall.params?.qrsDuration || 90,
@@ -55,6 +57,11 @@ export class ToolExecutor {
                 this.descriptionsDone = false;
                 this.renderer.setPaperSpeed(toolCall.paperSpeed || 25);
                 this.renderer.setGain(toolCall.gain || 10);
+                this.renderer._headerText = null;
+        this.programmaticAnalysis = null;
+        this.rhythmConsistency = null;
+        this.headerInfo = null;
+        this.redrawRound = false;
                 this.renderer.renderInit(this.storedParams);
                 return { success: true, action: 'init' };
             }

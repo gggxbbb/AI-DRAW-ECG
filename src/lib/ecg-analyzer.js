@@ -51,17 +51,14 @@ export class ECGAnalyzer {
 
                 if (infMatch.length >= 2) {
                     findings.push({ text: `下壁导联 ST 段抬高 (${infMatch.join(',')})`, severity: 'abnormal' });
-                    findings.push({ text: '提示：急性下壁心肌梗死', severity: 'abnormal' });
                     if (leadAnalysis['III'] && leadAnalysis['II'] &&
                         leadAnalysis['III'].stMv > leadAnalysis['II'].stMv) {
-                        findings.push({ text: 'III导联抬高 > II导联，提示右冠脉病变', severity: 'abnormal' });
+                        findings.push({ text: `III导联 ST 抬高 > II导联`, severity: 'abnormal' });
                     }
                 } else if (antMatch.length >= 2) {
                     findings.push({ text: `前壁导联 ST 段抬高 (${antMatch.join(',')})`, severity: 'abnormal' });
-                    findings.push({ text: '提示：急性前壁心肌梗死', severity: 'abnormal' });
                 } else if (latMatch.length >= 2) {
                     findings.push({ text: `侧壁导联 ST 段抬高 (${latMatch.join(',')})`, severity: 'abnormal' });
-                    findings.push({ text: '提示：急性侧壁心肌梗死', severity: 'abnormal' });
                 } else {
                     findings.push({ text: `ST 段抬高 (${stElevated.join(',')})`, severity: 'abnormal' });
                 }
@@ -95,59 +92,137 @@ export class ECGAnalyzer {
             }
         }
 
-        let conclusion = '正常心电图';
+        let conclusion = '未见明显异常';
         const crit = findings.filter(f => f.severity === 'critical').length;
         const abn = findings.filter(f => f.severity === 'abnormal').length;
-        if (crit > 0) conclusion = '危急异常心电图';
-        else if (abn > 0) conclusion = '异常心电图';
-        else if (findings.filter(f => f.severity === 'borderline').length > 0) conclusion = '大致正常心电图（边界性改变）';
+        if (crit > 0) conclusion = '检出多项异常指标';
+        else if (abn > 0) conclusion = '检出部分异常指标';
+        else if (findings.filter(f => f.severity === 'borderline').length > 0) conclusion = '存在边界性改变';
 
         return { measurements, findings, conclusion, timestamp: new Date().toISOString() };
     }
 
+    checkRhythmConsistency(params, curves) {
+        if (!params || !curves || Object.keys(curves).length < 6) return null;
+        const declared = params.rhythmType || 'sinus';
+        const hr = params.heartRate || 72;
+
+        const leadNames = Object.keys(curves);
+        const cycleLengths = [];
+        const baselineOffsets = [];
+        const rAmps = [];
+
+        for (const lead of leadNames) {
+            const pts = curves[lead];
+            if (!pts || pts.length < 6) continue;
+            const a = this._analyzeLeadCurve(pts);
+            if (!a) continue;
+            const len = pts[pts.length - 1][0] - pts[0][0];
+            cycleLengths.push(len);
+            baselineOffsets.push(a.baselineMv);
+            rAmps.push(a.rAmp);
+        }
+
+        const issues = [];
+        if (cycleLengths.length >= 2) {
+            const avgCL = cycleLengths.reduce((s, v) => s + v, 0) / cycleLengths.length;
+            const maxDev = Math.max(...cycleLengths.map(c => Math.abs(c - avgCL)));
+            if (maxDev > 0.05) {
+                issues.push(`导联间周期长度不一致（偏差 ${maxDev.toFixed(2)}s），应为同一周期`);
+            }
+        }
+
+        if (baselineOffsets.length >= 2) {
+            const maxBl = Math.max(...baselineOffsets);
+            const minBl = Math.min(...baselineOffsets);
+            if (maxBl - minBl > 0.2) {
+                issues.push(`导联间基线偏移过大（${minBl.toFixed(2)} ~ ${maxBl.toFixed(2)} mV）`);
+            }
+        }
+
+        const isSinusDeclared = declared === 'sinus' || declared === 'sinus_arrhythmia';
+        if (isSinusDeclared && rAmps.length >= 6) {
+            const hasV1V6 = leadNames.includes('V1') && leadNames.includes('V6');
+            if (hasV1V6) {
+                const aV1 = this._analyzeLeadCurve(curves['V1']);
+                const aV6 = this._analyzeLeadCurve(curves['V6']);
+                if (aV1 && aV6 && aV1.rAmp > aV6.rAmp) {
+                    issues.push('V1→V6 R波递增不良（V1振幅大于V6），正常应为递增');
+                }
+            }
+        }
+
+        return {
+            leadCount: leadNames.length,
+            avgCycleLength: cycleLengths.length > 0
+                ? Math.round(cycleLengths.reduce((s, v) => s + v, 0) / cycleLengths.length * 1000)
+                : null,
+            issues,
+            isConsistent: issues.length === 0,
+        };
+    }
+
     _analyzeLeadCurve(points) {
-        if (points.length < 6) return null;
+        if (points.length < 10) return null;
         const n = points.length;
+        const vals = points.map(p => p[1]);
 
         let maxMv = -Infinity, maxIdx = 0;
-        let minMv = Infinity, minIdx = 0;
         for (let i = 0; i < n; i++) {
-            const mv = points[i][1];
-            if (mv > maxMv) { maxMv = mv; maxIdx = i; }
-            if (mv < minMv) { minMv = mv; minIdx = i; }
+            if (vals[i] > maxMv) { maxMv = vals[i]; maxIdx = i; }
         }
         const rAmp = maxMv;
         const rIdx = maxIdx;
 
-        const qIdx = minIdx < maxIdx ? minIdx : -1;
-        const hasQWave = qIdx >= 0 && Math.abs(minMv) > 0.1;
-
-        const baselineMv = points.slice(0, Math.min(2, n))[0]?.[1] || 0;
-
-        let stStart = rIdx + Math.floor(n * 0.03);
-        let tStart = stStart + Math.floor(n * 0.08);
-        if (tStart >= n) tStart = n - 4;
-        if (stStart >= n) stStart = n - 6;
-        if (stStart > tStart) stStart = tStart - 2;
-
-        let stSum = 0, stCount = 0;
-        for (let i = stStart; i < tStart && i < n; i++) {
-            stSum += points[i][1];
-            stCount++;
+        let minMv = Infinity, minIdx = -1;
+        for (let i = 0; i < rIdx; i++) {
+            if (vals[i] < minMv) { minMv = vals[i]; minIdx = i; }
         }
+        const qDepth = minIdx >= 0 ? Math.abs(minMv) : 0;
+        const hasQWave = minIdx >= 0 && qDepth > 0.2 && qDepth > rAmp * 0.25;
+
+        const prEnd = Math.max(1, Math.floor(rIdx * 0.35));
+        let blSum = 0, blCount = 0;
+        for (let i = 0; i < prEnd; i++) { blSum += vals[i]; blCount++; }
+        const baselineMv = blCount > 0 ? blSum / blCount : 0;
+
+        let sIdx = rIdx;
+        let sMin = vals[rIdx];
+        for (let i = rIdx + 1; i < Math.min(rIdx + 15, n); i++) {
+            if (vals[i] < sMin) { sMin = vals[i]; sIdx = i; }
+        }
+
+        let jIdx = sIdx + 1;
+        for (let i = sIdx + 1; i < n - 4; i++) {
+            let flatRun = true;
+            for (let j = 0; j < 3; j++) {
+                if (Math.abs(vals[i + j + 1] - vals[i + j]) >= 0.03) { flatRun = false; break; }
+            }
+            if (flatRun) { jIdx = i; break; }
+        }
+
+        let tPeakIdx = -1;
+        let tMax = -Infinity;
+        const tStart = Math.min(jIdx + 3, n - 1);
+        for (let i = tStart; i < n; i++) {
+            if (vals[i] > tMax && vals[i] > baselineMv) { tMax = vals[i]; tPeakIdx = i; }
+        }
+        if (tPeakIdx < 0) {
+            let tMin2 = Infinity;
+            for (let i = tStart; i < n; i++) {
+                if (vals[i] < tMin2) { tMin2 = vals[i]; tPeakIdx = i; }
+            }
+            tMax = tMin2;
+        }
+        const tMv = tPeakIdx >= 0 ? vals[tPeakIdx] : baselineMv;
+        const tInverted = (tMv - baselineMv) < -0.1;
+
+        const stEnd = tPeakIdx > jIdx ? Math.floor(jIdx + (tPeakIdx - jIdx) * 0.35) : Math.min(jIdx + 2, n - 1);
+        let stSum = 0, stCount = 0;
+        for (let i = jIdx; i <= stEnd && i < n; i++) { stSum += vals[i] - baselineMv; stCount++; }
         const stMv = stCount > 0 ? stSum / stCount : 0;
 
-        let tStart2 = Math.floor(n * 0.6);
-        if (tStart2 < stStart + 1) tStart2 = stStart + 1;
-        let tMin = 0, tCount = 0;
-        for (let i = tStart2; i < n; i++) {
-            tMin += points[i][1];
-            tCount++;
-        }
-        const tAvg = tCount > 0 ? tMin / tCount : 0;
-        const tInverted = tAvg < -0.05;
-
-        return { rAmp, stMv, baselineMv, hasQWave, tInverted, tAvg };
+        return { rAmp, stMv, baselineMv, hasQWave, tInverted, tAvg: tMv - baselineMv };
     }
 
     _bazett(qt, hr) { return Math.round(qt / Math.sqrt(60 / hr)); }

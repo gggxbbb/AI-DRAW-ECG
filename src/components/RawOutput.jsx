@@ -58,7 +58,7 @@ function parseWithCategories(raw) {
 
 export default function RawOutput() {
     const { state } = useECG();
-    const { rawReasoning, progressBar, progressPhase, streamProgress, isGenerating } = state;
+    const { rawReasoning, progressBar, progressPhase, streamProgress, isGenerating, tokenUsage } = state;
     const [open, setOpen] = useState(true);
     const ref = useRef(null);
 
@@ -71,7 +71,7 @@ export default function RawOutput() {
     const hasContent = rawReasoning || progressBar || isGenerating;
     if (!hasContent) return null;
 
-    const phaseIcons = { init: '\u2699', leads: '\u{1F4C8}', rhythm: '\u{1F3B5}', interp: '\u{1F4DD}', desc: '\u{1F4CB}', done: '\u2713' };
+    const phaseIcons = { init: '\u2699', leads: '\u{1F4C8}', rhythm: '\u{1F3B5}', analysis: '\u{1F50D}', redraw: '\u{1F504}', interp: '\u{1F4DD}', desc: '\u{1F4CB}', done: '\u2713' };
 
     return (
         <section className="panel-section">
@@ -91,6 +91,16 @@ export default function RawOutput() {
                             <span style={{fontSize:'0.85rem'}}>{phaseIcons[progressPhase] || '\u25C9'}</span>
                             <span style={{color:'#333',fontWeight:500}}>{progressBar}</span>
                             {streamProgress && <span style={{color:'#888'}}>{streamProgress}</span>}
+                        </div>
+                    )}
+                    {tokenUsage && tokenUsage.total > 0 && (
+                        <div style={{
+                            fontFamily: 'monospace', fontSize: '0.62rem',
+                            padding: '3px 8px', color: '#888',
+                            textAlign: 'right', marginBottom: 4
+                        }}>
+                            累计消耗 token：{tokenUsage.total.toLocaleString()}
+                            （输入 {tokenUsage.prompt.toLocaleString()} + 输出 {tokenUsage.completion.toLocaleString()}）
                         </div>
                     )}
                     <div ref={ref} style={{

@@ -22,6 +22,7 @@ const initialState = {
     progressPhase: '',
     status: { text: '', className: '' },
     isGenerating: false,
+    tokenUsage: null,
     toasts: [],
 };
 
@@ -46,6 +47,7 @@ function reducer(state, action) {
         case 'SET_STREAM_PROGRESS': return { ...state, streamProgress: action.payload };
         case 'SET_PROGRESS_BAR': return { ...state, progressBar: action.payload };
         case 'SET_PROGRESS_PHASE': return { ...state, progressPhase: action.payload };
+        case 'SET_TOKEN_USAGE': return { ...state, tokenUsage: action.payload };
         case 'SET_STATUS': return { ...state, status: action.payload };
         case 'SET_GENERATING': return { ...state, isGenerating: action.payload };
         case 'ADD_TOAST':
@@ -56,7 +58,7 @@ function reducer(state, action) {
 }
 
 function progressBarStr(count, phase) {
-    const phases = { init: '初始化', leads: `导联 ${count}/12`, rhythm: '节律带', interp: 'AI解读', desc: '导联描述', done: '完成' };
+    const phases = { init: '初始化', leads: `导联 ${count}/12`, rhythm: '节律带', analysis: '程序分析中', redraw: 'AI 重绘', interp: 'AI解读', desc: '导联描述', done: '完成' };
     const p = phase || 'leads';
     return `${phases[p] || p}`;
 }
@@ -100,6 +102,7 @@ export function ECGProvider({ children }) {
         dispatch({ type: 'SET_PROGRESS_BAR', payload: '' });
         dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'init' });
         dispatch({ type: 'SET_HEADER_INFO', payload: null });
+        dispatch({ type: 'SET_TOKEN_USAGE', payload: null });
         dispatch({ type: 'SET_PARAMS', payload: null });
         dispatch({ type: 'SET_INTERPRETATION', payload: null });
         dispatch({ type: 'SET_AI_INTERPRETATION', payload: null });
@@ -121,7 +124,7 @@ export function ECGProvider({ children }) {
 
         try {
             roundErrors = [];
-            await aiClientRef.current.generateMultiRound(
+            const genResult = await aiClientRef.current.generateMultiRound(
                 condition, additionalParams,
                 (text, type) => {
                     if (type === 'reasoning') {
@@ -156,12 +159,25 @@ export function ECGProvider({ children }) {
                     if (result.action === 'writeHeaderInfo') {
                         dispatch({ type: 'SET_HEADER_INFO', payload: executorRef.headerInfo });
                     }
+                    if (result.action === 'drawLeadCurve' || result.action === 'drawLeadCurveCSV') {
+                        const curves = renderer._leadCurves || {};
+                        if (Object.keys(curves).length >= 3 && executorRef.storedParams) {
+                            const prog = ecgAnalyzer.analyze(executorRef.storedParams, curves);
+                            dispatch({ type: 'SET_PROGRAMMATIC_ANALYSIS', payload: prog });
+                            executorRef.programmaticAnalysis = prog;
+                            executorRef.rhythmConsistency = ecgAnalyzer.checkRhythmConsistency(executorRef.storedParams, curves);
+                        }
+                    }
                     if (result.action === 'drawRhythmStrip') {
                         dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'rhythm' });
                         dispatch({ type: 'SET_PROGRESS_BAR', payload: '节律带' });
                         const curves = renderer._leadCurves || {};
                         const prog = ecgAnalyzer.analyze(executorRef.storedParams, curves);
                         dispatch({ type: 'SET_PROGRAMMATIC_ANALYSIS', payload: prog });
+                        executorRef.programmaticAnalysis = prog;
+                        executorRef.rhythmConsistency = ecgAnalyzer.checkRhythmConsistency(executorRef.storedParams, curves);
+                        dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'analysis' });
+                        dispatch({ type: 'SET_PROGRESS_BAR', payload: prog.conclusion === '未见明显异常' ? '分析：未见异常' : '分析：' + prog.conclusion });
                     }
                     if (result.action === 'writeInterpretation') {
                         dispatch({ type: 'SET_PROGRESS_PHASE', payload: 'interp' });
@@ -177,22 +193,54 @@ export function ECGProvider({ children }) {
                 (info) => {
                     if (info.type === 'round') {
                         roundErrors = [];
-                        dispatch({ type: 'SET_STATUS', payload: { text: `第${info.round}轮生成中...`, className: 'status-loading' } });
+                        const rwNote = executorRef.redrawRound ? ' [重绘]' : '';
+                        dispatch({ type: 'SET_STATUS', payload: { text: `第${info.round}轮生成中...${rwNote}`, className: 'status-loading' } });
                     }
                     if (info.type === 'roundDone') {
                         dispatch({ type: 'APPEND_REASONING', payload: `第${info.round}轮完成 (${info.count}个工具调用)`, category: '状态' });
                     }
+                    if (info.type === 'usage') {
+                        dispatch({ type: 'SET_TOKEN_USAGE', payload: { prompt: info.prompt_tokens, completion: info.completion_tokens, total: info.total_tokens } });
+                    }
                     if (info.type === 'getStatus') {
                         if (!executorRef) return { complete: true, remaining: [], errors: [] };
+                        const analysis = executorRef.programmaticAnalysis;
+                        const rhythm = executorRef.rhythmConsistency;
+                        let analysisFeedback = null;
+                        if (analysis && rhythm && executorRef.leadCount >= 12) {
+                            const parts = [];
+                            if (analysis.conclusion !== '未见明显异常') {
+                                parts.push(`测量指标异常：${analysis.conclusion}`);
+                                const abns = analysis.findings.filter(f => f.severity === 'abnormal' || f.severity === 'critical');
+                                if (abns.length) parts.push(`发现：${abns.map(f => f.text).join('；')}`);
+                            }
+                            if (!rhythm.isConsistent) {
+                                parts.push(`节律一致性检查失败：${rhythm.issues.join('；')}`);
+                            }
+                            if (parts.length) analysisFeedback = parts.join('\n');
+                        }
                         return {
                             complete: executorRef.isComplete,
                             remaining: executorRef.getRemainingTasks(),
                             errors: roundErrors,
+                            analysisFeedback,
+                            context: {
+                                params: executorRef.storedParams,
+                                leadsDone: [...executorRef.leadNames],
+                                headerInfo: executorRef.headerInfo,
+                            },
                         };
                     }
                 },
                 state.aiConfig.reasoningEffort === 'off' ? 'none' : (state.aiConfig.reasoningEffort || undefined)
             );
+
+            if (genResult && genResult.aborted) {
+                dispatch({ type: 'SET_STATUS', payload: { text: '已停止', className: '' } });
+                dispatch({ type: 'SET_STREAM_PROGRESS', payload: '' });
+                dispatch({ type: 'SET_PROGRESS_BAR', payload: '' });
+                return;
+            }
 
             dispatch({ type: 'SET_STATUS', payload: { text: 'AI生成完成', className: 'status-success' } });
             dispatch({ type: 'SET_STREAM_PROGRESS', payload: '' });
@@ -209,13 +257,17 @@ export function ECGProvider({ children }) {
         }
     }, [state.displayConfig, addToast]);
 
+    const handleStopGeneration = useCallback(() => {
+        aiClientRef.current.abort();
+    }, []);
+
     const handleTestConnection = useCallback(async (endpoint, token, model, temperature) => {
         aiClientRef.current.configure(endpoint, token, model, temperature);
         try { const r = await aiClientRef.current.testConnection(); addToast('连接成功', 'success'); return { success: true, model: r.model }; }
         catch (err) { addToast(err.message, 'error'); return { success: false, message: err.message }; }
     }, [addToast]);
 
-    const value = { state, dispatch, getRenderer, setRenderer, addToast, loadConfig, saveConfig, handleGenerateStream, handleTestConnection, aiClientRef };
+    const value = { state, dispatch, getRenderer, setRenderer, addToast, loadConfig, saveConfig, handleGenerateStream, handleStopGeneration, handleTestConnection, aiClientRef };
     return <ECGContext.Provider value={value}>{children}</ECGContext.Provider>;
 }
 

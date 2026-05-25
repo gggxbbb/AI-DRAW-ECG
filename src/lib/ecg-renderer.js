@@ -14,6 +14,7 @@ export class ECGRenderer {
         this.GRID_SQUARES_W = 10;
         this.GRID_SQUARES_H = 4;
         this.RHYTHM_SQUARES_H = 4;
+        this.HEADER_ROWS = 3;
         this.LEAD_COLS = 4;
         this.LEAD_ROWS = 3;
         this.leadOrder = [
@@ -49,7 +50,7 @@ export class ECGRenderer {
 
         if (this._autoFit !== false) {
             const tw = this.GRID_SQUARES_W * 5 * this.LEAD_COLS;
-            const th = this.GRID_SQUARES_H * 5 * this.LEAD_ROWS + this.RHYTHM_SQUARES_H * 5;
+            const th = (this.HEADER_ROWS + this.GRID_SQUARES_H * this.LEAD_ROWS + this.RHYTHM_SQUARES_H) * 5;
             const bpm = 3.78;
             this.zoomLevel = Math.min((this.displayWidth - 4) / (tw * bpm), (this.displayHeight - 4) / (th * bpm), 3);
         }
@@ -59,32 +60,51 @@ export class ECGRenderer {
         const lw = this.mmToPx(this.GRID_SQUARES_W * 5);
         const lh = this.mmToPx(this.GRID_SQUARES_H * 5);
         const rh = this.mmToPx(this.RHYTHM_SQUARES_H * 5);
+        const hh = this.mmToPx(this.HEADER_ROWS * 5);
         const tw = lw * this.LEAD_COLS;
-        const th = lh * this.LEAD_ROWS + rh;
+        const th = hh + lh * this.LEAD_ROWS + rh;
         return {
-            leadW: lw, leadH: lh, rhythmH: rh,
+            leadW: lw, leadH: lh, rhythmH: rh, headerH: hh,
             offsetX: Math.round((this.displayWidth - tw) / 2),
             offsetY: Math.round((this.displayHeight - th) / 2),
             totalW: tw, totalH: th,
         };
     }
 
-    drawFullGrid(ox, oy, tw, th) {
+    drawFullGrid(ox, oy, tw, th, hh) {
         const ctx = this.ctx;
+        const gridTop = oy + (hh || 0);
+        const gridTotalH = th - (hh || 0);
         ctx.fillStyle = this.colors.background;
         ctx.fillRect(ox, oy, tw, th);
         if (!this.showGrid) return;
         const s = this.mmToPx(1);
         const l = this.mmToPx(5);
         const R = ox + tw, B = oy + th;
+        const top = gridTop;
         ctx.strokeStyle = this.colors.gridMinor; ctx.lineWidth = 0.3; ctx.beginPath();
-        for (let x = ox; x <= R; x += s) { ctx.moveTo(x, oy); ctx.lineTo(x, B); }
-        for (let y = oy; y <= B; y += s) { ctx.moveTo(ox, y); ctx.lineTo(R, y); }
+        for (let x = ox; x <= R; x += s) { ctx.moveTo(x, top); ctx.lineTo(x, B); }
+        for (let y = top; y <= B; y += s) { ctx.moveTo(ox, y); ctx.lineTo(R, y); }
         ctx.stroke();
         ctx.strokeStyle = this.colors.gridMajor; ctx.lineWidth = 0.6; ctx.beginPath();
-        for (let x = ox; x <= R; x += l) { ctx.moveTo(x, oy); ctx.lineTo(x, B); }
-        for (let y = oy; y <= B; y += l) { ctx.moveTo(ox, y); ctx.lineTo(R, y); }
+        for (let x = ox; x <= R; x += l) { ctx.moveTo(x, top); ctx.lineTo(x, B); }
+        for (let y = top; y <= B; y += l) { ctx.moveTo(ox, y); ctx.lineTo(R, y); }
         ctx.stroke();
+        if (hh && hh > 0) {
+            ctx.strokeStyle = this.colors.gridMinor; ctx.lineWidth = 0.3; ctx.beginPath();
+            for (let x = ox; x <= R; x += s) { ctx.moveTo(x, oy); ctx.lineTo(x, gridTop); }
+            for (let y = oy; y <= gridTop; y += s) { ctx.moveTo(ox, y); ctx.lineTo(R, y); }
+            ctx.stroke();
+            const l2 = this.mmToPx(5);
+            ctx.strokeStyle = this.colors.gridMajor; ctx.lineWidth = 0.6; ctx.beginPath();
+            for (let x = ox; x <= R; x += l2) { ctx.moveTo(x, oy); ctx.lineTo(x, gridTop); }
+            ctx.moveTo(ox, gridTop); ctx.lineTo(R, gridTop);
+            const line1 = oy + hh * 0.33;
+            const line2 = oy + hh * 0.66;
+            ctx.moveTo(ox, line1); ctx.lineTo(R, line1);
+            ctx.moveTo(ox, line2); ctx.lineTo(R, line2);
+            ctx.stroke();
+        }
     }
 
     drawLeadLabel(x, y, name) {
@@ -123,14 +143,14 @@ export class ECGRenderer {
         if (!text || !this._layout) return;
         const ctx = this.ctx;
         const L = this._layout;
-        const headerY = L.offsetY - this.mmToPx(3);
-        if (headerY < this.mmToPx(2)) return;
+        if (L.headerH < this.mmToPx(3)) return;
+        const headerMid = L.offsetY + L.headerH / 2;
         ctx.save();
         ctx.fillStyle = '#555';
         ctx.font = `bold ${7 * this.zoomLevel}px "Segoe UI", sans-serif`;
-        ctx.textBaseline = 'bottom';
+        ctx.textBaseline = 'middle';
         ctx.textAlign = 'center';
-        ctx.fillText(text, L.offsetX + L.totalW / 2, headerY);
+        ctx.fillText(text, L.offsetX + L.totalW / 2, headerMid);
         ctx.restore();
     }
 
@@ -142,7 +162,7 @@ export class ECGRenderer {
         ctx.fillRect(0, 0, this.displayWidth, this.displayHeight);
 
         const L = this.calcLayout();
-        this.drawFullGrid(L.offsetX, L.offsetY, L.totalW, L.totalH);
+        this.drawFullGrid(L.offsetX, L.offsetY, L.totalW, L.totalH, L.headerH);
         this._layout = L;
         this._drawWatermark();
         this._leadDuration = 2.5;
@@ -151,16 +171,17 @@ export class ECGRenderer {
         this._leadPanels = [];
         if (!keepCurves) this._leadCurves = {};
 
+        const gridY = L.offsetY + L.headerH;
         for (let row = 0; row < this.LEAD_ROWS; row++) {
             for (let col = 0; col < this.LEAD_COLS; col++) {
                 const lead = this.leadOrder[row][col];
                 const x = L.offsetX + col * L.leadW;
-                const y = L.offsetY + row * L.leadH;
+                const y = gridY + row * L.leadH;
                 this._leadPanels.push({ lead, x, y, w: L.leadW, h: L.leadH });
             }
         }
         this._rhythmPanel = {
-            lead: 'II', x: L.offsetX, y: L.offsetY + this.LEAD_ROWS * L.leadH,
+            lead: 'II', x: L.offsetX, y: gridY + this.LEAD_ROWS * L.leadH,
             w: this.LEAD_COLS * L.leadW, h: L.rhythmH,
         };
 
