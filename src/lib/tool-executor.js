@@ -129,8 +129,20 @@ export class ToolExecutor {
             }
             case 'drawAllLeadsCSV': {
                 if (!this.initDone) return { success: false, errors: ['请先调用 initRender'] };
-                const leadsObj = toolCall.leads;
-                if (!leadsObj || typeof leadsObj !== 'object') return { success: false, errors: ['leads 必须是对象'] };
+                let leadsObj = toolCall.leads;
+                if (!leadsObj || typeof leadsObj !== 'object') {
+                    const directLeads = {};
+                    for (const l of ['I','II','III','aVR','aVL','aVF','V1','V2','V3','V4','V5','V6']) {
+                        if (typeof toolCall[l] === 'string' && toolCall[l].trim().length >= 10) {
+                            directLeads[l] = toolCall[l];
+                        }
+                    }
+                    if (Object.keys(directLeads).length >= 11) {
+                        leadsObj = directLeads;
+                    } else {
+                        return { success: false, errors: ['leads 必须是对象（{ "I":"csv...", "II":"csv...", ... }），不是数组，不是顶层单独字段'] };
+                    }
+                }
                 const errors = [];
                 const parsedLeads = [];
                 for (const [lead, csv] of Object.entries(leadsObj)) {

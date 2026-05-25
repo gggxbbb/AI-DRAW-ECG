@@ -280,7 +280,11 @@ export function ECGProvider({ children }) {
                     dispatch({ type: 'APPEND_REASONING', payload: `第${info.iteration}轮完成 (${info.toolCount}个工具调用)`, category: '状态' });
                 }
                 if (info.type === 'usage') {
-                    currentTokenUsage = { prompt: info.prompt_tokens, completion: info.completion_tokens, total: info.total_tokens };
+                    currentTokenUsage = {
+                        prompt: (currentTokenUsage?.prompt || 0) + info.prompt_tokens,
+                        completion: (currentTokenUsage?.completion || 0) + info.completion_tokens,
+                        total: (currentTokenUsage?.total || 0) + info.total_tokens,
+                    };
                     dispatch({ type: 'SET_TOKEN_USAGE', payload: currentTokenUsage });
                 }
                 if (info.type === 'getStatus') {

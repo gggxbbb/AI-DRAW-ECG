@@ -173,7 +173,7 @@ export function buildECGSystemPrompt() {
 - 所有波形偏移以此基线为参考
 
 绘制引擎选择：
-- drawAllLeadsCSV：一次性绘制全部12导联（推荐），提交一个 leads 对象，键为导联名，值为 CSV 字符串
+- drawAllLeadsCSV：一次性绘制全部12导联（推荐），参数格式：{ "leads": { "I":"csv...", "II":"csv...", "III":"csv...", "aVR":"csv...", "aVL":"csv...", "aVF":"csv...", "V1":"csv...", ... "V6":"csv..." } }。leads 是一个对象（不是数组），必须包含全部12个导联的键名。
 - drawLeadCurve：常规情况，单周期+自动循环，数据通过程序校验
 - drawLeadCurveCSV：逐导联精细控制 — 精细波形(>30点)、多形态波形、复杂病变(碎裂QRS/delta波等)、不规则节律、校验重试困难后
 - drawRhythmStrip：复用已绘制的导联数据循环填充10s
@@ -280,14 +280,28 @@ export function buildOpenAITools() {
             type: 'function',
             function: {
                 name: 'drawAllLeadsCSV',
-                description: '一次性绘制全部12导联（推荐）。提交 leads 对象，键为 I,II,III,aVR,aVL,aVF,V1~V6，值为对应 CSV 字符串。一次调用完成全部绘制，高效。',
+                description: '一次性绘制全部12导联（推荐）。参数格式：{ "leads": { "I":"csv...", "II":"csv...", "III":"csv...", "aVR":"csv...", "aVL":"csv...", "aVF":"csv...", "V1":"csv...", "V2":"csv...", "V3":"csv...", "V4":"csv...", "V5":"csv...", "V6":"csv..." } }。leads 对象必须包含全部 12 个导联的键。一次调用完成全部绘制。',
                 parameters: {
                     type: 'object',
                     properties: {
                         leads: {
                             type: 'object',
-                            description: '12导联 CSV 数据，键为导联名，值为多行CSV字符串（每行"t,mV"）',
-                            additionalProperties: { type: 'string' }
+                            description: '必须包含全部12个导联作为键：I,II,III,aVR,aVL,aVF,V1,V2,V3,V4,V5,V6。每个值是对应导联的多行 CSV 字符串（每行"t,mV"）',
+                            properties: {
+                                I:   { type: 'string', description: 'I导联的 CSV 数据' },
+                                II:  { type: 'string', description: 'II导联的 CSV 数据' },
+                                III: { type: 'string', description: 'III导联的 CSV 数据' },
+                                aVR: { type: 'string', description: 'aVR导联的 CSV 数据' },
+                                aVL: { type: 'string', description: 'aVL导联的 CSV 数据' },
+                                aVF: { type: 'string', description: 'aVF导联的 CSV 数据' },
+                                V1:  { type: 'string', description: 'V1导联的 CSV 数据' },
+                                V2:  { type: 'string', description: 'V2导联的 CSV 数据' },
+                                V3:  { type: 'string', description: 'V3导联的 CSV 数据' },
+                                V4:  { type: 'string', description: 'V4导联的 CSV 数据' },
+                                V5:  { type: 'string', description: 'V5导联的 CSV 数据' },
+                                V6:  { type: 'string', description: 'V6导联的 CSV 数据' },
+                            },
+                            required: ['I','II','III','aVR','aVL','aVF','V1','V2','V3','V4','V5','V6']
                         }
                     },
                     required: ['leads']
